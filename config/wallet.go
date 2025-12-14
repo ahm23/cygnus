@@ -34,10 +34,9 @@ func InitWallet(homeDir string) (*WalletInfo, error) {
 	}
 
 	// Check if wallet already exists
-	_, err = kr.Key(cfg.ProviderName)
+	_, err = kr.Key("cygnus")
 	if err == nil {
-		// Wallet exists, just load it
-		return loadExistingWallet(kr, cfg.ProviderName, homeDir)
+		return loadExistingWallet(kr, "cygnus", homeDir)
 	}
 
 	// Wallet doesn't exist, create new one
@@ -52,9 +51,9 @@ func InitWallet(homeDir string) (*WalletInfo, error) {
 
 	switch choice {
 	case "1":
-		return createNewWallet(kr, cfg.ProviderName, homeDir)
+		return createNewWallet(kr, "cygnus", homeDir)
 	case "2":
-		return importWallet(kr, cfg.ProviderName, homeDir)
+		return importWallet(kr, "cygnus", homeDir)
 	default:
 		return nil, fmt.Errorf("invalid choice")
 	}

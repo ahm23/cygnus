@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/rs/zerolog/log"
 
@@ -30,7 +31,7 @@ func NewApp(home string) (*App, error) {
 		return nil, err
 	}
 
-	ctx := context.Background()
+	// ctx := context.Background()
 
 	// dataDir := os.ExpandEnv(cfg.DataDirectory)
 
@@ -67,12 +68,17 @@ func NewApp(home string) (*App, error) {
 
 	// pprofServer := monitoring.NewPProf("localhost:6060")
 
-	w, err := config.InitWallet(home)
+	wc, err := config.InitWallet(home)
 	if err != nil {
 		return nil, err
 	}
-	log.Info().Str("provider_address", w.Address).Send()
+	log.Info().Str("provider_address", wc.Address).Send()
+	log.Info().Str("home", home).Send()
 
+	w, err := wallet.NewWallet(cfg.HomeDir, "cygnus", "nebulix", cfg.ChainCfg.KeyringBackend, cfg.ChainCfg.GRPCAddr)
+	if err != nil {
+		return nil, err
+	}
 	// f, err := file_system.NewFileSystem(ctx, db, cfg.BlockStoreConfig.Key, ds, bs, cfg.APICfg.IPFSPort, cfg.APICfg.IPFSDomain)
 	// if err != nil {
 	// 	return nil, err
@@ -104,14 +110,15 @@ func (a *App) Start() error {
 	cl := a.wallet.QueryClient.Storage
 
 	res, err := cl.Provider(context.Background(), queryProviderParams)
-	if err != nil {
+	if err != nil || res.Provider == nil {
 		log.Info().Err(err).Msg("Provider does not exist on network or is not connected...")
 		err := initProviderOnChain(a.wallet, cfg.Ip, cfg.TotalSpace)
 		if err != nil {
 			return err
 		}
 	} else {
-		log.Debug().
+		log.Info().Str("res", res.String()).Send()
+		log.Info().
 			Str("address", res.Provider.Address).
 			Str("hostname", res.Provider.Hostname).
 			Int64("created_at", res.Provider.CreatedAt).
@@ -190,15 +197,21 @@ func (a *App) Start() error {
 }
 
 func initProviderOnChain(wallet *wallet.Wallet, ip string, totalSpace int64) error {
-	msg := storageTypes.MsgRegisterProvider{
-		Hostname: "test",
-		Capacity: 10000000000,
+	msg := &storageTypes.MsgRegisterProvider{
+		Creator:  wallet.Address.String(),
+		Hostname: ip,
+		Capacity: totalSpace,
 	}
 
-	_, err := wallet.MsgClient.Storage.RegisterProvider(
-		context.Background(),
-		&msg,
-	)
+	resp, err := wallet.BroadcastTxGrpc(msg)
+	if err != nil {
+		return fmt.Errorf("failed to broadcast transaction: %w", err)
+	}
 
-	return err
+	if resp.Code != 0 {
+		return fmt.Errorf("transaction failed: %s", resp.RawLog)
+	}
+
+	fmt.Printf("Provider registered! Tx hash: %s\n", resp.TxHash)
+	return nil
 }

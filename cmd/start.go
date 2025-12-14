@@ -29,10 +29,7 @@ func StartCmd() *cobra.Command {
 				return err
 			}
 
-			maxRestartAttempt, err := cmd.Flags().GetInt("restart-attempt")
-			if err != nil {
-				return err
-			}
+			maxRestartAttempt := 3
 			if maxRestartAttempt < 0 {
 				maxRestartAttempt = 0
 			}
@@ -59,6 +56,7 @@ func StartCmd() *cobra.Command {
 				time.Sleep(time.Minute)
 				err = app.Start()
 			}
+
 			return err
 		},
 	}

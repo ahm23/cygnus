@@ -7,11 +7,16 @@ import (
 	"time"
 
 	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/client/tx"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdktx "github.com/cosmos/cosmos-sdk/types/tx"
+	"github.com/cosmos/cosmos-sdk/types/tx/signing"
+
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
+	"github.com/rs/zerolog/log"
 
 	storagetypes "nebulix/x/storage/types"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 
@@ -27,11 +32,12 @@ type Wallet struct {
 	homeDir   string
 	chainID   string
 	grpcConn  *grpc.ClientConn
+	keyName   string // Store the key name
 
-	Address sdk.Address
+	Address sdk.AccAddress
 	// GRPC Clients
 	QueryClient QueryClients
-	MsgClient   MsgClients
+	txClient    sdktx.ServiceClient
 }
 
 // QueryClients groups all query clients
@@ -63,6 +69,7 @@ func NewWallet(homeDir, name, chainID, keyringBackend, grpcEndpoint string) (*Wa
 		return nil, fmt.Errorf("failed to create keyring: %w", err)
 	}
 
+	log.Info().Str("<NewWallet> Wallet Name", name).Send()
 	info, err := kr.Key(name)
 	if err != nil {
 		return nil, err
@@ -84,15 +91,21 @@ func NewWallet(homeDir, name, chainID, keyringBackend, grpcEndpoint string) (*Wa
 		WithTxConfig(encodingConfig.TxConfig).
 		WithLegacyAmino(encodingConfig.Amino).
 		WithBroadcastMode("sync").
-		WithSkipConfirmation(true)
+		WithSkipConfirmation(true).
+		WithFromName(name).
+		WithFromAddress(address).
+		WithSignModeStr("direct")
+
+	registerAccountInterfaces(clientCtx.InterfaceRegistry)
 
 	// Initialize wallet without GRPC connection first
 	w := &Wallet{
-		Address:   address,
 		kr:        kr,
 		clientCtx: clientCtx,
 		homeDir:   homeDir,
 		chainID:   chainID,
+		Address:   address,
+		keyName:   name,
 	}
 
 	// Connect to GRPC if endpoint provided
@@ -123,6 +136,8 @@ func (w *Wallet) ConnectGRPC(endpoint string) error {
 
 	w.grpcConn = conn
 
+	w.clientCtx = w.clientCtx.WithGRPCClient(conn)
+
 	// Initialize query clients
 	w.QueryClient = QueryClients{
 		Auth:    authtypes.NewQueryClient(conn),
@@ -130,11 +145,7 @@ func (w *Wallet) ConnectGRPC(endpoint string) error {
 		Storage: storagetypes.NewQueryClient(conn),
 	}
 
-	// Initialize msg clients
-	w.MsgClient = MsgClients{
-		Bank:    banktypes.NewMsgClient(conn),
-		Storage: storagetypes.NewMsgClient(conn),
-	}
+	w.txClient = sdktx.NewServiceClient(conn)
 
 	return nil
 }
@@ -156,111 +167,125 @@ func (w *Wallet) GetAddress(keyName string) (sdk.AccAddress, error) {
 	return info.GetAddress()
 }
 
-// // BroadcastTx broadcasts a transaction
-// func BroadcastTxGrpc(clientCtx client.Context, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
-// 	txf, err := tx.NewFactoryCLI(clientCtx, nil)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	txf, err = prepareFactory(clientCtx, txf)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+// GetAccountInfo gets account number and sequence
+func (w *Wallet) GetAccountInfo() (accountNum, sequence uint64, err error) {
+	// Query account information
+	ctx := context.Background()
+	resp, err := w.QueryClient.Auth.Account(ctx, &authtypes.QueryAccountRequest{
+		Address: w.Address.String(),
+	})
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to query account: %w", err)
+	}
 
-// 	// calculate gas
-// 	if txf.SimulateAndExecute() || clientCtx.Simulate {
-// 		_, adjusted, err := tx.CalculateGas(clientCtx, txf, msgs...)
-// 		if err != nil {
-// 			return nil, err
-// 		}
+	// Unmarshal the account interface
+	var acc sdk.AccountI
+	err = w.clientCtx.InterfaceRegistry.UnpackAny(resp.Account, &acc)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to unpack account: %w", err)
+	}
 
-// 		txf = txf.WithGas(adjusted)
-// 		_, _ = fmt.Fprintf(os.Stderr, "%s\n", tx.GasEstimateResponse{GasEstimate: txf.Gas()})
-// 	}
+	return acc.GetAccountNumber(), acc.GetSequence(), nil
+}
 
-// 	// build transaction
-// 	txn, err := txf.BuildUnsignedTx(msgs...)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+// BroadcastTx broadcasts a transaction
+func (w *Wallet) BroadcastTxGrpc(msgs ...sdk.Msg) (*sdk.TxResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-// 	// log transaction
-// 	out, err := clientCtx.TxConfig.TxJSONEncoder()(txn.GetTx())
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	_, _ = fmt.Fprintf(os.Stderr, "%s\n\n", out)
+	// Get account info first
+	accountNum, sequence, err := w.GetAccountInfo()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get account info: %w", err)
+	}
 
-// 	if clientCtx.Simulate {
-// 		return nil, nil
-// 	}
+	// Create transaction factory with proper settings
+	txf := tx.Factory{}.
+		WithTxConfig(w.clientCtx.TxConfig).
+		WithAccountRetriever(w.clientCtx.AccountRetriever).
+		WithChainID(w.chainID).
+		WithGas(200000). // Default gas, will be adjusted by simulation
+		WithGasAdjustment(1.2).
+		WithFees("2000unblx"). // Adjust based on your chain
+		WithKeybase(w.clientCtx.Keyring).
+		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT).
+		WithSimulateAndExecute(true).
+		WithAccountNumber(accountNum).
+		WithSequence(sequence).
+		WithFromName("cygnus")
 
-// 	// set fee granter
-// 	txn.SetFeeGranter(clientCtx.GetFeeGranterAddress())
+	if w.grpcConn == nil {
+		return nil, fmt.Errorf("GRPC connection not established - cannot simulate gas")
+	}
 
-// 	// sign transaction
-// 	err = tx.Sign(clientCtx.CmdContext, txf, clientCtx.GetFromName(), txn, true)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+	// // Build and simulate first
+	// _, adjusted, err := tx.CalculateGas(w.clientCtx, txf, msgs...)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to simulate gas: %w", err)
+	// }
 
-// 	// prepare transaction bytes
-// 	txBytes, err := clientCtx.TxConfig.TxEncoder()(txn.GetTx())
-// 	if err != nil {
-// 		return nil, err
-// 	}
+	// // Update with actual gas
+	// txf = txf.WithGas(adjusted)
 
-// 	// Broadcast transaction using gRPC
-// 	ctx := context.Background()
-// 	broadcastReq := &sdktx.BroadcastTxRequest{
-// 		TxBytes: txBytes,
-// 		Mode:    sdktx.BroadcastMode_BROADCAST_MODE_SYNC, // Use SYNC for confirmation of tx delivery
-// 	}
-// 	// broadcastResp, err := txClient.BroadcastTx(ctx, broadcastReq)
-// 	// if err != nil {
-// 	// 	return nil, fmt.Errorf("failed to broadcast transaction: %w", err)
-// 	// }
+	// Build unsigned transaction
+	txb, err := txf.BuildUnsignedTx(msgs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build tx: %w", err)
+	}
 
-// 	// // Convert gRPC response to sdk.TxResponse
-// 	// sdkResp := &sdk.TxResponse{
-// 	// 	TxHash: broadcastResp.TxResponse.TxHash,
-// 	// 	Code:   broadcastResp.TxResponse.Code,
-// 	// 	Data:   broadcastResp.TxResponse.Data,
-// 	// 	RawLog: broadcastResp.TxResponse.RawLog,
-// 	// 	Logs:   sdk.ABCIMessageLogs{}, // Parse logs if needed
-// 	// }
+	// Sign the transaction
+	err = tx.Sign(ctx, txf, w.keyName, txb, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign tx: %w", err)
+	}
 
-// 	// if sdkResp.Code != 0 {
-// 	// 	fmt.Errorf(sdkResp.String())
-// 	// 	return sdkResp, fmt.Errorf("transaction failed with code %d: %s", sdkResp.Code, sdkResp.RawLog)
-// 	// }
+	// Encode
+	txBytes, err := w.clientCtx.TxConfig.TxEncoder()(txb.GetTx())
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode tx: %w", err)
+	}
 
-// 	// return sdkResp, nil
-// 	return nil, nil
-// }
+	// Broadcast
+	return w.broadcastTxBytes(txBytes)
+}
 
-// func prepareFactory(clientCtx client.Context, txf tx.Factory) (tx.Factory, error) {
-// 	from := clientCtx.GetFromAddress()
+// broadcastTxBytes broadcasts encoded transaction bytes
+func (w *Wallet) broadcastTxBytes(txBytes []byte) (*sdk.TxResponse, error) {
+	if w.txClient == nil {
+		return nil, fmt.Errorf("tx client not initialized")
+	}
 
-// 	if err := txf.AccountRetriever().EnsureExists(clientCtx, from); err != nil {
-// 		return txf, err
-// 	}
+	// Broadcast with sync mode
+	broadcastReq := &sdktx.BroadcastTxRequest{
+		TxBytes: txBytes,
+		Mode:    sdktx.BroadcastMode_BROADCAST_MODE_SYNC,
+	}
 
-// 	initNum, initSeq := txf.AccountNumber(), txf.Sequence()
-// 	if initNum == 0 || initSeq == 0 {
-// 		num, seq, err := txf.AccountRetriever().GetAccountNumberSequence(clientCtx, from)
-// 		if err != nil {
-// 			return txf, err
-// 		}
+	broadcastResp, err := w.txClient.BroadcastTx(context.Background(), broadcastReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to broadcast transaction: %w", err)
+	}
 
-// 		if initNum == 0 {
-// 			txf = txf.WithAccountNumber(num)
-// 		}
+	return broadcastResp.TxResponse, nil
+}
 
-// 		if initSeq == 0 {
-// 			txf = txf.WithSequence(seq)
-// 		}
-// 	}
+// WaitForTx waits for transaction to be included in a block
+func (w *Wallet) WaitForTx(txHash string, maxRetries int) (*sdk.TxResponse, error) {
+	if w.txClient == nil {
+		return nil, fmt.Errorf("tx client not initialized")
+	}
 
-// 	return txf, nil
-// }
+	for i := 0; i < maxRetries; i++ {
+		resp, err := w.txClient.GetTx(context.Background(), &sdktx.GetTxRequest{Hash: txHash})
+		if err == nil {
+			return resp.TxResponse, nil
+		}
+
+		// Check if it's a not found error (tx might not be in block yet)
+		if i < maxRetries-1 {
+			time.Sleep(1 * time.Second)
+		}
+	}
+
+	return nil, fmt.Errorf("timeout waiting for transaction %s", txHash)
+}

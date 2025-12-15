@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -266,26 +267,40 @@ func (w *Wallet) broadcastTxBytes(txBytes []byte) (*sdk.TxResponse, error) {
 		return nil, fmt.Errorf("failed to broadcast transaction: %w", err)
 	}
 
-	return broadcastResp.TxResponse, nil
+	fmt.Println("TxReponse Code:", broadcastResp.TxResponse.Code)
+
+	txResponse, err := w.WaitForTx(broadcastResp.TxResponse.TxHash)
+	if err != nil {
+		return nil, err
+	} else if txResponse.Code != 0 {
+		return nil, errors.New(txResponse.RawLog)
+	} else {
+		return broadcastResp.TxResponse, nil
+	}
 }
 
 // WaitForTx waits for transaction to be included in a block
-func (w *Wallet) WaitForTx(txHash string, maxRetries int) (*sdk.TxResponse, error) {
+func (w *Wallet) WaitForTx(txHash string) (*sdk.TxResponse, error) {
 	if w.txClient == nil {
 		return nil, fmt.Errorf("tx client not initialized")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	for i := 0; i < maxRetries; i++ {
-		resp, err := w.txClient.GetTx(context.Background(), &sdktx.GetTxRequest{Hash: txHash})
-		if err == nil {
-			return resp.TxResponse, nil
-		}
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
 
-		// Check if it's a not found error (tx might not be in block yet)
-		if i < maxRetries-1 {
-			time.Sleep(1 * time.Second)
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("timeout waiting for transaction", txHash)
+			return nil, ctx.Err()
+
+		case <-ticker.C:
+			resp, err := w.txClient.GetTx(context.Background(), &sdktx.GetTxRequest{Hash: txHash})
+			if err == nil {
+				return resp.TxResponse, nil // tx found (executed)
+			}
 		}
 	}
-
-	return nil, fmt.Errorf("timeout waiting for transaction %s", txHash)
 }

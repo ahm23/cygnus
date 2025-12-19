@@ -23,7 +23,7 @@ func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*me
 	// Calculate number of chunks
 	totalChunks := int(math.Ceil(float64(len(data)) / float64(types.ChunkSize)))
 
-	// Prepare data for Merkle tree
+	// prepare merkle leaves
 	var leaves [][]byte
 	hasher := blake3.New()
 
@@ -43,6 +43,7 @@ func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*me
 		leaves = append(leaves, chunkHash)
 	}
 
+	// create merkle tree
 	tree, err := merkletree.NewUsing(
 		leaves,
 		treeblake3.New256(),

@@ -25,9 +25,11 @@ import (
 
 	// Import from your local blockchain
 	"nebulix/app"
+
+	"cygnus/types"
 )
 
-type Wallet struct {
+type AtlasManager struct {
 	kr        keyring.Keyring
 	clientCtx client.Context
 	homeDir   string
@@ -37,15 +39,8 @@ type Wallet struct {
 
 	Address sdk.AccAddress
 	// GRPC Clients
-	QueryClient QueryClients
+	QueryClient types.QueryClients
 	txClient    sdktx.ServiceClient
-}
-
-// QueryClients groups all query clients
-type QueryClients struct {
-	Auth    authtypes.QueryClient
-	Bank    banktypes.QueryClient
-	Storage storagetypes.QueryClient
 }
 
 // MsgClients groups all message clients
@@ -54,7 +49,7 @@ type MsgClients struct {
 	Storage storagetypes.MsgClient
 }
 
-func NewWallet(homeDir, name, chainID, keyringBackend, grpcEndpoint string) (*Wallet, error) {
+func NewAtlasManager(homeDir, name, chainID, keyringBackend, grpcEndpoint string) (*AtlasManager, error) {
 	// Get encoding config from your blockchain
 	encodingConfig := app.MakeEncodingConfig()
 
@@ -70,7 +65,7 @@ func NewWallet(homeDir, name, chainID, keyringBackend, grpcEndpoint string) (*Wa
 		return nil, fmt.Errorf("failed to create keyring: %w", err)
 	}
 
-	log.Info().Str("<NewWallet> Wallet Name", name).Send()
+	log.Info().Str("<NewAtlasManager> AtlasManager Name", name).Send()
 	info, err := kr.Key(name)
 	if err != nil {
 		return nil, err
@@ -99,8 +94,8 @@ func NewWallet(homeDir, name, chainID, keyringBackend, grpcEndpoint string) (*Wa
 
 	registerAccountInterfaces(clientCtx.InterfaceRegistry)
 
-	// Initialize wallet without GRPC connection first
-	w := &Wallet{
+	// Initialize AtlasManager without GRPC connection first
+	w := &AtlasManager{
 		kr:        kr,
 		clientCtx: clientCtx,
 		homeDir:   homeDir,
@@ -120,7 +115,7 @@ func NewWallet(homeDir, name, chainID, keyringBackend, grpcEndpoint string) (*Wa
 }
 
 // ConnectGRPC establishes GRPC connection and initializes clients
-func (w *Wallet) ConnectGRPC(endpoint string) error {
+func (w *AtlasManager) ConnectGRPC(endpoint string) error {
 	// Create GRPC connection
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -140,7 +135,7 @@ func (w *Wallet) ConnectGRPC(endpoint string) error {
 	w.clientCtx = w.clientCtx.WithGRPCClient(conn)
 
 	// Initialize query clients
-	w.QueryClient = QueryClients{
+	w.QueryClient = types.QueryClients{
 		Auth:    authtypes.NewQueryClient(conn),
 		Bank:    banktypes.NewQueryClient(conn),
 		Storage: storagetypes.NewQueryClient(conn),
@@ -152,7 +147,7 @@ func (w *Wallet) ConnectGRPC(endpoint string) error {
 }
 
 // Close closes the GRPC connection
-func (w *Wallet) Close() error {
+func (w *AtlasManager) Close() error {
 	if w.grpcConn != nil {
 		return w.grpcConn.Close()
 	}
@@ -160,7 +155,7 @@ func (w *Wallet) Close() error {
 }
 
 // GetAddress returns address for a key
-func (w *Wallet) GetAddress(keyName string) (sdk.AccAddress, error) {
+func (w *AtlasManager) GetAddress(keyName string) (sdk.AccAddress, error) {
 	info, err := w.kr.Key(keyName)
 	if err != nil {
 		return nil, err
@@ -169,7 +164,7 @@ func (w *Wallet) GetAddress(keyName string) (sdk.AccAddress, error) {
 }
 
 // GetAccountInfo gets account number and sequence
-func (w *Wallet) GetAccountInfo() (accountNum, sequence uint64, err error) {
+func (w *AtlasManager) GetAccountInfo() (accountNum, sequence uint64, err error) {
 	// Query account information
 	ctx := context.Background()
 	resp, err := w.QueryClient.Auth.Account(ctx, &authtypes.QueryAccountRequest{
@@ -190,7 +185,7 @@ func (w *Wallet) GetAccountInfo() (accountNum, sequence uint64, err error) {
 }
 
 // BroadcastTx broadcasts a transaction
-func (w *Wallet) BroadcastTxGrpc(msgs ...sdk.Msg) (*sdk.TxResponse, error) {
+func (w *AtlasManager) BroadcastTxGrpc(msgs ...sdk.Msg) (*sdk.TxResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -251,7 +246,7 @@ func (w *Wallet) BroadcastTxGrpc(msgs ...sdk.Msg) (*sdk.TxResponse, error) {
 }
 
 // broadcastTxBytes broadcasts encoded transaction bytes
-func (w *Wallet) broadcastTxBytes(txBytes []byte) (*sdk.TxResponse, error) {
+func (w *AtlasManager) broadcastTxBytes(txBytes []byte) (*sdk.TxResponse, error) {
 	if w.txClient == nil {
 		return nil, fmt.Errorf("tx client not initialized")
 	}
@@ -280,7 +275,7 @@ func (w *Wallet) broadcastTxBytes(txBytes []byte) (*sdk.TxResponse, error) {
 }
 
 // WaitForTx waits for transaction to be included in a block
-func (w *Wallet) WaitForTx(txHash string) (*sdk.TxResponse, error) {
+func (w *AtlasManager) WaitForTx(txHash string) (*sdk.TxResponse, error) {
 	if w.txClient == nil {
 		return nil, fmt.Errorf("tx client not initialized")
 	}

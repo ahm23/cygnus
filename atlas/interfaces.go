@@ -1,4 +1,4 @@
-package wallet
+package atlas
 
 import (
 	"github.com/cosmos/cosmos-sdk/codec/types"

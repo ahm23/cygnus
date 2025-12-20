@@ -3,19 +3,21 @@ package core
 import (
 	"context"
 	"fmt"
+	"os"
 
+	"github.com/aws/aws-sdk-go/private/model/api"
 	"github.com/rs/zerolog/log"
 
+	"cygnus/atlas"
 	"cygnus/config"
-	"cygnus/wallet"
 
 	storageTypes "nebulix/x/storage/types"
 )
 
 type App struct {
-	home string
-	// api    *api.API
-	wallet *wallet.Wallet
+	home  string
+	api   *api.API
+	atlas *atlas.AtlasManager
 	// q            *queue.Queue
 	// prover       *proofs.Prover
 	// monitor    *monitoring.Monitor
@@ -33,40 +35,25 @@ func NewApp(home string) (*App, error) {
 
 	// ctx := context.Background()
 
-	// dataDir := os.ExpandEnv(cfg.DataDirectory)
+	dataDir := os.ExpandEnv(cfg.DataDirectory)
 
-	// err = os.MkdirAll(dataDir, os.ModePerm)
-	// if err != nil {
-	// 	return nil, err
-	// }
+	err = os.MkdirAll(dataDir, os.ModePerm)
+	if err != nil {
+		return nil, err
+	}
 
-	// db, err := utils.OpenBadger(dataDir)
-	// if err != nil {
-	// 	return nil, err
-	// }
+	// Initialize PebbleDB for metadata
+	storageDB, err := storage.NewPebbleStore(cfg.HomeDir)
+	if err != nil {
+		log.Fatal().Err(err)
+	}
+	defer storageDB.Close()
 
-	// ds, err := ipfs.NewBadgerDataStore(db)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// log.Info().Msg("Data store initialized")
-
-	// bsDir := os.ExpandEnv(cfg.BlockStoreConfig.Directory)
-	// var bs blockstore.Blockstore
-	// bs = nil
-	// switch cfg.BlockStoreConfig.Type {
-	// case config.OptBadgerDS:
-	// case config.OptFlatFS:
-	// 	bs, err = ipfs.NewFlatfsBlockStore(bsDir)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// }
-	// log.Info().Msg("Blockstore initialized")
-
-	// apiServer := api.NewAPI(&cfg.APICfg)
-
-	// pprofServer := monitoring.NewPProf("localhost:6060")
+	// Initialize storage manager
+	storageManager, err := storage.NewStorageManager(cfg, storageDB)
+	if err != nil {
+		log.Fatal().Err(err)
+	}
 
 	wc, err := config.InitWallet(home)
 	if err != nil {
@@ -75,7 +62,7 @@ func NewApp(home string) (*App, error) {
 	log.Info().Str("provider_address", wc.Address).Send()
 	log.Info().Str("home", home).Send()
 
-	w, err := wallet.NewWallet(cfg.HomeDir, "cygnus", "nebulix", cfg.ChainCfg.KeyringBackend, cfg.ChainCfg.GRPCAddr)
+	w, err := atlas.NewAtlasManager(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -89,8 +76,8 @@ func NewApp(home string) (*App, error) {
 		// fileSystem:  f,
 		// api:         apiServer,
 		// pprofServer: pprofServer,
-		home:   home,
-		wallet: w,
+		home:  home,
+		atlas: w,
 	}, nil
 }
 
@@ -105,14 +92,14 @@ func (a *App) Start() error {
 	// claimers := make([]string, 0)
 
 	queryProviderParams := &storageTypes.QueryProviderRequest{
-		Address: a.wallet.Address.String(),
+		Address: a.atlas.Address.String(),
 	}
-	cl := a.wallet.QueryClient.Storage
+	cl := a.atlas.QueryClient.Storage
 
 	res, err := cl.Provider(context.Background(), queryProviderParams)
 	if err != nil || res.Provider == nil {
 		log.Info().Err(err).Msg("Provider does not exist on network or is not connected...")
-		err := initProviderOnChain(a.wallet, cfg.Ip, cfg.TotalSpace)
+		err := initProviderOnChain(a.atlas, cfg.Ip, cfg.TotalSpace)
 		if err != nil {
 			return err
 		}
@@ -146,7 +133,7 @@ func (a *App) Start() error {
 		// }
 	}
 
-	// params, err := a.GetStorageParams(a.wallet.Client.GRPCConn)
+	// params, err := a.GetStorageParams(a.atlas.Client.GRPCConn)
 	// if err != nil {
 	// 	return err
 	// }
@@ -196,14 +183,14 @@ func (a *App) Start() error {
 	return nil
 }
 
-func initProviderOnChain(wallet *wallet.Wallet, ip string, totalSpace int64) error {
+func initProviderOnChain(wallet *atlas.AtlasManager, ip string, totalSpace int64) error {
 	msg := &storageTypes.MsgRegisterProvider{
-		Creator:  wallet.Address.String(),
+		Creator:  atlas.Address.String(),
 		Hostname: ip,
 		Capacity: totalSpace,
 	}
 
-	resp, err := wallet.BroadcastTxGrpc(msg)
+	resp, err := atlas.BroadcastTxGrpc(msg)
 	if err != nil {
 		return fmt.Errorf("failed to broadcast transaction: %w", err)
 	}

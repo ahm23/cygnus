@@ -1,15 +1,15 @@
 package api
 
 import (
+	"cygnus/atlas"
 	"cygnus/config"
 	"cygnus/storage"
-	"cygnus/wallet"
 
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
 )
 
-func SetupRoutes(app *fiber.App, atlas *wallet.AtlasManager, storageManager *storage.StorageManager, logger *zap.Logger, cfg *config.Config) {
+func SetupRoutes(app *fiber.App, atlas *atlas.AtlasManager, storageManager *storage.StorageManager, logger *zap.Logger, cfg *config.Config) {
 	handler := NewHandler(storageManager, logger, cfg)
 
 	middleware := Middleware{
@@ -33,12 +33,8 @@ func SetupRoutes(app *fiber.App, atlas *wallet.AtlasManager, storageManager *sto
 	// api.Delete("/files/:id", handler.DeleteFile)
 	// api.Get("/files/stats", handler.GetFileStats)
 
-	// Provider operations
-	api.Get("/status", handler.GetStatus)
-
-	// Public endpoints
-	app.Get("/health", handler.HealthCheck)
-	app.Get("/status", handler.GetStatus) // Public status endpoint
+	// app.Get("/health", handler.HealthCheck)
+	// app.Get("/status", handler.GetStatus) // Public status endpoint
 }
 
 // SetupSwagger for API documentation (optional)

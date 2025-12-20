@@ -2,9 +2,9 @@ package storage
 
 import (
 	"context"
+	"cygnus/atlas"
 	"cygnus/config"
 	"cygnus/types"
-	"cygnus/wallet"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -27,14 +27,14 @@ import (
 type StorageManager struct {
 	config    *config.Config
 	logger    *zap.Logger
-	atlas     *wallet.AtlasManager
+	atlas     *atlas.AtlasManager
 	redis     *redis.Client
 	mu        sync.RWMutex
 	activeOps map[string]*sync.Mutex
 	fileLocks sync.Map
 }
 
-func NewStorageManager(cfg *config.Config, atlas *wallet.AtlasManager, logger *zap.Logger, redisClient *redis.Client) *StorageManager {
+func NewStorageManager(cfg *config.Config, atlas *atlas.AtlasManager, logger *zap.Logger, redisClient *redis.Client) *StorageManager {
 	// Create storage directory if it doesn't exist
 	os.MkdirAll(cfg.DataDirectory, 0755)
 
@@ -86,7 +86,7 @@ func (sm *StorageManager) UploadFile(ctx context.Context, fileId string, fileHea
 		ChallengeId: "",
 		Data:        fileData[:1024],
 		Hashes:      merkleProof.Hashes,
-		ChunkIndex:  merkleProof.Index,
+		Chunk:       merkleProof.Index,
 	}
 	_, err = sm.atlas.BroadcastTxGrpc(msg)
 	if err != nil {

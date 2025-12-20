@@ -194,6 +194,10 @@ func (w *AtlasWallet) GetSequence() uint64 {
 	return w.sequence
 }
 
+func (w *AtlasWallet) GetAddress() string {
+	return w.address.String()
+}
+
 // broadcastWithRetry handles broadcasting with retry for sequence errors
 func (w *AtlasWallet) broadcastWithRetry(ctx context.Context, txBytes []byte, retries int, wait bool) (*sdk.TxResponse, error) {
 

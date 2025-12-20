@@ -34,16 +34,15 @@ type StorageManager struct {
 	fileLocks sync.Map
 }
 
-func NewStorageManager(cfg *config.Config, atlas *atlas.AtlasManager, logger *zap.Logger, redisClient *redis.Client) *StorageManager {
+func NewStorageManager(cfg *config.Config, logger *zap.Logger, atlas *atlas.AtlasManager) (*StorageManager, error) {
 	// Create storage directory if it doesn't exist
-	os.MkdirAll(cfg.DataDirectory, 0755)
+	err := os.MkdirAll(cfg.DataDirectory, 0755)
 
 	return &StorageManager{
 		config:    cfg,
 		logger:    logger,
-		redis:     redisClient,
 		activeOps: make(map[string]*sync.Mutex),
-	}
+	}, err
 }
 
 func (sm *StorageManager) UploadFile(ctx context.Context, fileId string, fileHeader *multipart.FileHeader) (*types.FileMetadata, error) {
@@ -88,7 +87,7 @@ func (sm *StorageManager) UploadFile(ctx context.Context, fileId string, fileHea
 		Hashes:      merkleProof.Hashes,
 		Chunk:       merkleProof.Index,
 	}
-	_, err = sm.atlas.BroadcastTxGrpc(msg)
+	_, err = sm.atlas.Wallet.BroadcastTxGrpc(0, false, msg)
 	if err != nil {
 		// [TODO]: cleanup, delete saved file
 		return nil, fmt.Errorf("failed to post initial file proof")

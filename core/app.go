@@ -4,20 +4,26 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/aws/aws-sdk-go/private/model/api"
 	"github.com/rs/zerolog/log"
+	"go.uber.org/zap"
 
+	"cygnus/api"
 	"cygnus/atlas"
 	"cygnus/config"
+	"cygnus/storage"
 
 	storageTypes "nebulix/x/storage/types"
 )
 
 type App struct {
-	home  string
-	api   *api.API
-	atlas *atlas.AtlasManager
+	cfg            *config.Config
+	home           string
+	api            *api.API
+	atlas          *atlas.AtlasManager
+	storageManager *storage.StorageManager
 	// q            *queue.Queue
 	// prover       *proofs.Prover
 	// monitor    *monitoring.Monitor
@@ -32,8 +38,7 @@ func NewApp(home string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// ctx := context.Background()
+	logger, err := zap.NewProduction()
 
 	dataDir := os.ExpandEnv(cfg.DataDirectory)
 
@@ -43,63 +48,58 @@ func NewApp(home string) (*App, error) {
 	}
 
 	// Initialize PebbleDB for metadata
-	storageDB, err := storage.NewPebbleStore(cfg.HomeDir)
-	if err != nil {
-		log.Fatal().Err(err)
-	}
-	defer storageDB.Close()
+	// storageDB, err := storage.NewPebbleStore(cfg.HomeDir)
+	// if err != nil {
+	// 	log.Fatal().Err(err)
+	// }
+	// defer storageDB.Close()
 
-	// Initialize storage manager
-	storageManager, err := storage.NewStorageManager(cfg, storageDB)
-	if err != nil {
-		log.Fatal().Err(err)
-	}
-
-	wc, err := config.InitWallet(home)
-	if err != nil {
-		return nil, err
-	}
-	log.Info().Str("provider_address", wc.Address).Send()
-	log.Info().Str("home", home).Send()
-
-	w, err := atlas.NewAtlasManager(cfg)
-	if err != nil {
-		return nil, err
-	}
-	// f, err := file_system.NewFileSystem(ctx, db, cfg.BlockStoreConfig.Key, ds, bs, cfg.APICfg.IPFSPort, cfg.APICfg.IPFSDomain)
+	// wc, err := config.InitWallet(home)
 	// if err != nil {
 	// 	return nil, err
 	// }
-	// log.Info().Msg("File system initialized")
+	// log.Info().Str("provider_address", wc.Address).Send()
+	// log.Info().Str("home", home).Send()
+
+	atlas, err := atlas.NewAtlasManager(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	// Initialize storage manager
+	storageManager, err := storage.NewStorageManager(cfg, logger, atlas)
+	if err != nil {
+		log.Fatal().Err(err)
+	}
+
+	apiServer := api.NewAPI(&cfg.APICfg)
 
 	return &App{
-		// fileSystem:  f,
-		// api:         apiServer,
-		// pprofServer: pprofServer,
-		home:  home,
-		atlas: w,
+		cfg:            cfg,
+		home:           home,
+		atlas:          atlas,
+		api:            apiServer,
+		storageManager: storageManager,
 	}, nil
 }
 
-func (a *App) Start() error {
-	cfg, err := config.Init(a.home)
-	if err != nil {
-		return err
-	}
+func (app *App) Start() error {
 	log.Info().Msg("Starting Cygnus...")
-	log.Debug().Object("config", cfg).Msg("cygnus config")
+	log.Debug().Object("config", app.cfg).Msg("cygnus config")
 
-	// claimers := make([]string, 0)
+	app.atlas.ConnectGRPC()
+	app.atlas.ConnectWallet()
+	// [TODO]: error handling
 
 	queryProviderParams := &storageTypes.QueryProviderRequest{
-		Address: a.atlas.Address.String(),
+		Address: app.atlas.Wallet.GetAddress(),
 	}
-	cl := a.atlas.QueryClient.Storage
+	cl := app.atlas.QueryClients.Storage
 
 	res, err := cl.Provider(context.Background(), queryProviderParams)
 	if err != nil || res.Provider == nil {
 		log.Info().Err(err).Msg("Provider does not exist on network or is not connected...")
-		err := initProviderOnChain(a.atlas, cfg.Ip, cfg.TotalSpace)
+		err := initProviderOnChain(app.atlas.Wallet, app.cfg.Ip, app.cfg.TotalSpace)
 		if err != nil {
 			return err
 		}
@@ -120,77 +120,44 @@ func (a *App) Start() error {
 		// 	return err
 		// }
 		// if totalSpace != cfg.TotalSpace {
-		// 	err := updateSpace(a.wallet, cfg.TotalSpace)
+		// 	err := updateSpace(app.wallet, cfg.TotalSpace)
 		// 	if err != nil {
 		// 		return err
 		// 	}
 		// }
 		// if res.Provider.Ip != cfg.Ip {
-		// 	err := updateIp(a.wallet, cfg.Ip)
+		// 	err := updateIp(app.wallet, cfg.Ip)
 		// 	if err != nil {
 		// 		return err
 		// 	}
 		// }
 	}
 
-	// params, err := a.GetStorageParams(a.atlas.Client.GRPCConn)
-	// if err != nil {
-	// 	return err
-	// }
+	// Starting concurrent services
+	go app.api.Serve(app.storageManager)
+	// go app.prover.Start()
+	// go app.strayManager.Start(app.fileSystem, app.q, myUrl, params.ChunkSize)
 
-	// a.q = queue.NewQueue(a.wallet, cfg.QueueInterval, cfg.MaxSizeBytes, cfg.Ip, cfg.QueueRateLimit)
-	// go a.q.Listen()
+	done := make(chan os.Signal, 1)
+	defer signal.Stop(done)
 
-	// prover := proofs.NewProver(a.wallet, a.q, a.fileSystem, cfg.ProofInterval, cfg.ProofThreads, int(params.ChunkSize))
+	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
+	<-done // Will block here until user hits ctrl+c
 
-	// myUrl := cfg.Ip
+	fmt.Println("Shutting cygnus down safely...")
 
-	// log.Info().Msg(fmt.Sprintf("Provider started as: %s", myAddress))
-
-	// a.prover = prover
-	// a.strayManager = strays.NewStrayManager(a.wallet, a.q, cfg.StrayManagerCfg.CheckInterval, cfg.StrayManagerCfg.RefreshInterval, cfg.StrayManagerCfg.HandCount, claimers)
-	// a.monitor = monitoring.NewMonitor(a.wallet)
-
-	// // Starting the 4 concurrent services
-	// if cfg.APICfg.IPFSSearch {
-	// 	// nolint:all
-	// 	go a.ConnectPeers()
-	// }
-	// go a.api.Serve(a.fileSystem, a.prover, a.wallet, params.ChunkSize, myUrl)
-	// go a.prover.Start()
-	// go a.strayManager.Start(a.fileSystem, a.q, myUrl, params.ChunkSize)
-	// go a.monitor.Start()
-	// go a.pprofServer.Start()
-
-	// done := make(chan os.Signal, 1)
-	// defer signal.Stop(done) // undo signal.Notify effect
-
-	// signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
-	// <-done // Will block here until user hits ctrl+c
-
-	// fmt.Println("Shutting cygnus down safely...")
-
-	// _ = a.api.Close()
-	// a.q.Stop()
-	// a.prover.Stop()
-	// a.strayManager.Stop()
-	// a.monitor.Stop()
-
-	// time.Sleep(time.Second * 30) // give the program some time to shut down
-	// a.fileSystem.Close()
-	// _ = a.pprofServer.Stop()
-
+	_ = app.api.Close()
 	return nil
 }
 
-func initProviderOnChain(wallet *atlas.AtlasManager, ip string, totalSpace int64) error {
+func initProviderOnChain(wallet *atlas.AtlasWallet, ip string, totalSpace int64) error {
 	msg := &storageTypes.MsgRegisterProvider{
-		Creator:  atlas.Address.String(),
+		Creator:  wallet.GetAddress(),
 		Hostname: ip,
 		Capacity: totalSpace,
 	}
 
-	resp, err := atlas.BroadcastTxGrpc(msg)
+	resp, err := wallet.BroadcastTxGrpc(3, true, msg)
 	if err != nil {
 		return fmt.Errorf("failed to broadcast transaction: %w", err)
 	}

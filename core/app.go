@@ -20,6 +20,7 @@ import (
 
 type App struct {
 	cfg            *config.Config
+	log            *zap.Logger
 	home           string
 	api            *api.API
 	atlas          *atlas.AtlasManager
@@ -73,9 +74,11 @@ func NewApp(home string) (*App, error) {
 	}
 
 	apiServer := api.NewAPI(&cfg.APICfg)
+	apiServer.SetupRoutes(cfg, logger, atlas, storageManager)
 
 	return &App{
 		cfg:            cfg,
+		log:            logger,
 		home:           home,
 		atlas:          atlas,
 		api:            apiServer,
@@ -87,9 +90,14 @@ func (app *App) Start() error {
 	log.Info().Msg("Starting Cygnus...")
 	log.Debug().Object("config", app.cfg).Msg("cygnus config")
 
-	app.atlas.ConnectGRPC()
-	app.atlas.ConnectWallet()
-	// [TODO]: error handling
+	app.genTestFile()
+
+	if err := app.atlas.ConnectGRPC(); err != nil {
+		return err
+	}
+	if err := app.atlas.ConnectWallet(); err != nil {
+		return err
+	}
 
 	queryProviderParams := &storageTypes.QueryProviderRequest{
 		Address: app.atlas.Wallet.GetAddress(),
@@ -134,7 +142,8 @@ func (app *App) Start() error {
 	}
 
 	// Starting concurrent services
-	go app.api.Serve(app.storageManager)
+	app.log.Info("Starting API Server...")
+	go app.api.Serve()
 	// go app.prover.Start()
 	// go app.strayManager.Start(app.fileSystem, app.q, myUrl, params.ChunkSize)
 
@@ -168,4 +177,13 @@ func initProviderOnChain(wallet *atlas.AtlasWallet, ip string, totalSpace int64)
 
 	fmt.Printf("Provider registered! Tx hash: %s\n", resp.TxHash)
 	return nil
+}
+
+// [TODO]: rmeove this when doen with CLI tesdting
+func (app *App) genTestFile() {
+	file, _ := os.ReadFile("go.mod")
+
+	tree, _ := app.storageManager.BuildMerkleTree(context.Background(), file)
+
+	fmt.Printf("Merkle Root: %x\n", tree.Root())
 }

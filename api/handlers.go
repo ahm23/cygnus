@@ -4,6 +4,7 @@ import (
 	"cygnus/config"
 	"cygnus/storage"
 	"cygnus/types"
+	"fmt"
 
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
@@ -24,7 +25,14 @@ func NewHandler(storageManager *storage.StorageManager, logger *zap.Logger, cfg 
 }
 
 func (h *Handler) UploadFile(c *fiber.Ctx) error {
-	// download file into memory
+	fileId := c.FormValue("fid", "")
+	if fileId == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(types.APIResponse{
+			Success: false,
+			Error:   "No file id provided",
+		})
+	}
+
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(types.APIResponse{
@@ -42,8 +50,9 @@ func (h *Handler) UploadFile(c *fiber.Ctx) error {
 	}
 
 	// Upload file
-	metadata, err := h.storageManager.ProveFile(c.Context(), fileHeader, &req)
+	metadata, err := h.storageManager.UploadFile(c.Context(), fileId, fileHeader)
 	if err != nil {
+		fmt.Println(err)
 		h.logger.Error("Failed to upload file", zap.Error(err))
 		return c.Status(fiber.StatusInternalServerError).JSON(types.APIResponse{
 			Success: false,

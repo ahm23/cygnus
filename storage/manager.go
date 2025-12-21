@@ -41,6 +41,7 @@ func NewStorageManager(cfg *config.Config, logger *zap.Logger, atlas *atlas.Atla
 	return &StorageManager{
 		config:    cfg,
 		logger:    logger,
+		atlas:     atlas,
 		activeOps: make(map[string]*sync.Mutex),
 	}, err
 }
@@ -82,7 +83,9 @@ func (sm *StorageManager) UploadFile(ctx context.Context, fileId string, fileHea
 
 	// attest to having a file using an initial proof without challenge
 	msg := &storageTypes.MsgProveFile{
+		Creator:     sm.atlas.Wallet.GetAddress(),
 		ChallengeId: "",
+		FileId:      fileId,
 		Data:        fileData[:1024],
 		Hashes:      merkleProof.Hashes,
 		Chunk:       merkleProof.Index,
@@ -90,6 +93,7 @@ func (sm *StorageManager) UploadFile(ctx context.Context, fileId string, fileHea
 	_, err = sm.atlas.Wallet.BroadcastTxGrpc(0, false, msg)
 	if err != nil {
 		// [TODO]: cleanup, delete saved file
+		fmt.Println(err.Error())
 		return nil, fmt.Errorf("failed to post initial file proof")
 	}
 
@@ -110,9 +114,9 @@ func (sm *StorageManager) UploadFile(ctx context.Context, fileId string, fileHea
 		//MimeType:    fileHeader.Header.Get("Content-Type"), // [TBD]: keep this? or should always be octet-stream on delivery
 	}
 
-	if err := sm.storeMetadata(ctx, metadata); err != nil {
-		return nil, fmt.Errorf("failed to store metadata: %w", err)
-	}
+	// if err := sm.storeMetadata(ctx, metadata); err != nil {
+	// 	return nil, fmt.Errorf("failed to store metadata: %w", err)
+	// }
 
 	sm.logger.Info("File uploaded successfully with Merkle tree",
 		zap.String("file_id", fileId),

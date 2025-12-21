@@ -76,3 +76,8 @@ func (sm *StorageManager) cacheMerkleTree(ctx context.Context, fileID string, tr
 	key := fmt.Sprintf("merkle:%s", fileID)
 	return sm.redis.HSet(ctx, key, treeData).Err()
 }
+
+// [TODO]: remove this when done with CLI tests
+func (sm *StorageManager) BuildMerkleTree(ctx context.Context, data []byte) (*merkletree.MerkleTree, error) {
+	return sm.buildMerkleTree(ctx, data)
+}

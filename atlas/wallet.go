@@ -119,6 +119,7 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 		return nil, fmt.Errorf("GRPC connection not established - cannot simulate gas")
 	}
 
+	fmt.Println(w.clientCtx.FromAddress)
 	// simulate and update gas
 	simulatedGas, adjusted, err := tx.CalculateGas(w.clientCtx, txf, msgs...)
 	if err != nil {
@@ -212,6 +213,7 @@ func (w *AtlasWallet) broadcastWithRetry(ctx context.Context, txBytes []byte, re
 			return txResp, nil
 		}
 
+		fmt.Println(err.Error())
 		// Check if it's a sequence error
 		if w.isSequenceError(err) {
 			w.logger.Warn("Sequence error detected, refreshing account info")

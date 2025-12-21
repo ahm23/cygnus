@@ -9,15 +9,15 @@ import (
 	"go.uber.org/zap"
 )
 
-func SetupRoutes(app *fiber.App, atlas *atlas.AtlasManager, storageManager *storage.StorageManager, logger *zap.Logger, cfg *config.Config) {
+func (a *API) SetupRoutes(cfg *config.Config, logger *zap.Logger, atlas *atlas.AtlasManager, storageManager *storage.StorageManager) {
 	handler := NewHandler(storageManager, logger, cfg)
 
 	middleware := Middleware{
-		atlas.QueryClient,
+		&atlas.QueryClients,
 	}
 
 	// API group with auth middleware
-	api := app.Group("/api/v1")
+	api := a.srv.Group("/api/v1")
 	// api.Use(AuthMiddleware(cfg))
 	// api.Use(FileSizeLimitMiddleware(cfg.Storage.MaxUploadSize))
 

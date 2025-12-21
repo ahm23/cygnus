@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"cygnus/config"
-	"cygnus/storage"
 	"errors"
 	"fmt"
 	"net/http"
@@ -20,31 +19,9 @@ type API struct {
 
 // NewAPI creates a new API instance using the provided API configuration.
 func NewAPI(cfg *config.APIConfig) *API {
-	return &API{
-		port: cfg.Port,
-		cfg:  cfg,
-	}
-}
-
-func (a *API) Close() error {
-	if a.srv == nil {
-		return fmt.Errorf("no server available")
-	}
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer shutdownCancel()
-	return a.srv.ShutdownWithContext(shutdownCtx)
-}
-
-// p *proofs.Prover, wallet *wallet.Wallet, chunkSize int64, myIp string
-func (a *API) Serve(sm *storage.StorageManager) {
-	// defer log.Info().Msg("API module stopped")
-
-	SetupRoutes(a.srv)
-
 	// [TODO]: alow cors
 	// Create Fiber app
-	a.srv = fiber.New(fiber.Config{
+	srv := fiber.New(fiber.Config{
 		AppName: "Cygnus DePIN Storage Provider",
 		// ReadTimeout:  cfg.Server.ReadTimeout,
 		// WriteTimeout: cfg.Server.WriteTimeout,
@@ -60,10 +37,31 @@ func (a *API) Serve(sm *storage.StorageManager) {
 		},
 	})
 
-	err := a.srv.Listen(fmt.Sprintf(":%s", a.cfg.Port))
+	return &API{
+		port: cfg.Port,
+		cfg:  cfg,
+		srv:  srv,
+	}
+}
+
+func (a *API) Close() error {
+	if a.srv == nil {
+		return fmt.Errorf("no server available")
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+	return a.srv.ShutdownWithContext(shutdownCtx)
+}
+
+// p *proofs.Prover, wallet *wallet.Wallet, chunkSize int64, myIp string
+func (a *API) Serve() {
+	// defer log.Info().Msg("API module stopped")
+	fmt.Println("WAHT THE FUCAAACK")
+	err := a.srv.Listen(":3333")
 	if err != nil {
 		if !errors.Is(err, http.ErrServerClosed) {
-			// log.Warn().Err(err)
+			fmt.Println("ERROR STARTING SERVER")
 			return
 		}
 	}

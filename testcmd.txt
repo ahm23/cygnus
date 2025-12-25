@@ -1,4 +1,9 @@
 cd $HOME/go/bin
 ./nebulixd tx bank send nblx1wszdmd04uxggyz2hq8u4ss30f8dy59zzrynzd7 nblx1j0wy04pdsrfpt5cduhff7gx2u8ma87vlphswnf 100000unblx
 ./nebulixd tx storage buy-storage nblx1wszdmd04uxggyz2hq8u4ss30f8dy59zzrynzd7 720 1000000000 false --from alice --broadcast-mode sync
+./nebulixd tx storage buy-storage nblx1z239sd39dy3srhtkvn94zedd5uuz9ct5xvjtew 720 1000000000 false --from alice --broadcast-mode sync
 ./nebulixd tx storage post-file 944fcccaea7b0957ebd0fa45708faba560fb736e7157464c5b9f82f2963a4beb 8005 3 sub_0 --from alice
+
+
+./nebulixd tx bank send atl1wszdmd04uxggyz2hq8u4ss30f8dy59zz28mn2x atl13ejhye4klzttcefutpkdh3awxs5f3kjxyky73q 100000uatl
+./nebulixd tx storage buy-storage atl13ejhye4klzttcefutpkdh3awxs5f3kjxyky73q 720 1000000000 false --from alice --broadcast-mode sync

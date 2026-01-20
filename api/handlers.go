@@ -25,6 +25,8 @@ func NewHandler(storageManager *storage.StorageManager, logger *zap.Logger, cfg 
 }
 
 func (h *Handler) UploadFile(c *fiber.Ctx) error {
+	// ---- Request Validation ---- //
+	// REQUIRED: fileId
 	fileId := c.FormValue("fid", "")
 	if fileId == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(types.APIResponse{
@@ -32,7 +34,7 @@ func (h *Handler) UploadFile(c *fiber.Ctx) error {
 			Error:   "No file id provided",
 		})
 	}
-
+	// REQUIRED: file
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(types.APIResponse{
@@ -40,8 +42,7 @@ func (h *Handler) UploadFile(c *fiber.Ctx) error {
 			Error:   "No file uploaded",
 		})
 	}
-
-	// check file size limit
+	// REQUIRED: file size < MaxUploadSize
 	if fileHeader.Size > h.config.APICfg.MaxUploadSize {
 		return c.Status(fiber.StatusBadRequest).JSON(types.APIResponse{
 			Success: false,
@@ -49,8 +50,8 @@ func (h *Handler) UploadFile(c *fiber.Ctx) error {
 		})
 	}
 
-	// Upload file
-	metadata, err := h.storageManager.UploadFile(c.Context(), fileId, fileHeader)
+	// ---- Request Handling ---- //
+	metadata, err := h.storageManager.Upload(c.Context(), fileId, fileHeader)
 	if err != nil {
 		fmt.Println(err)
 		h.logger.Error("Failed to upload file", zap.Error(err))

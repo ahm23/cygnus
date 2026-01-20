@@ -46,9 +46,9 @@ func NewStorageManager(cfg *config.Config, logger *zap.Logger, atlas *atlas.Atla
 	}, err
 }
 
-func (sm *StorageManager) UploadFile(ctx context.Context, fileId string, fileHeader *multipart.FileHeader) (*types.FileMetadata, error) {
+func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader *multipart.FileHeader) (*types.FileMetadata, error) {
 	// read entire file into memory
-	// [TBD]: is there a better way of doing this? imagine loading a 128GB file into memory :p
+	// [TBD]: is there a better way of doing this? imagine loading a 32GB file into memory :p
 	file, err := fileHeader.Open()
 	if err != nil {
 		return nil, fmt.Errorf("failed to open uploaded file: %w", err)
@@ -69,7 +69,7 @@ func (sm *StorageManager) UploadFile(ctx context.Context, fileId string, fileHea
 	merkleRoot := tree.Root()
 
 	// generate proof of first chunk
-	// [TODO]: make this a deterministic random chunk
+	// [TBD]: make this a deterministic random chunk
 	merkleProof, err := sm.generateProof(tree, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate file proof")

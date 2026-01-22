@@ -73,8 +73,8 @@ func (sm *StorageManager) cacheMerkleTree(ctx context.Context, fileID string, tr
 
 	// [TODO]: cache leaves for reconstruction,
 	// nodes instead maybe? idk.. performance impact to be analyzed
-	key := fmt.Sprintf("merkle:%s", fileID)
-	return sm.redis.HSet(ctx, key, treeData).Err()
+	key := MerkleKey(fileID)
+	return sm.db.SetHash(ctx, key, treeData)
 }
 
 // [TODO]: remove this when done with CLI tests

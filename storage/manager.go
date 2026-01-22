@@ -6,18 +6,18 @@ import (
 	"cygnus/config"
 	"cygnus/types"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"math"
 	"mime/multipart"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"github.com/wealdtech/go-merkletree/v2"
 	"go.uber.org/zap"
 
@@ -28,7 +28,7 @@ type StorageManager struct {
 	config    *config.Config
 	logger    *zap.Logger
 	atlas     *atlas.AtlasManager
-	redis     *redis.Client
+	db        *PebbleStore
 	mu        sync.RWMutex
 	activeOps map[string]*sync.Mutex
 	fileLocks sync.Map
@@ -37,13 +37,23 @@ type StorageManager struct {
 func NewStorageManager(cfg *config.Config, logger *zap.Logger, atlas *atlas.AtlasManager) (*StorageManager, error) {
 	// Create storage directory if it doesn't exist
 	err := os.MkdirAll(cfg.DataDirectory, 0755)
+	if err != nil {
+		return nil, err
+	}
+
+	// Initialize PebbleDB store
+	db, err := NewPebbleStore(cfg.DataDirectory, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize pebble store: %w", err)
+	}
 
 	return &StorageManager{
 		config:    cfg,
 		logger:    logger,
 		atlas:     atlas,
+		db:        db,
 		activeOps: make(map[string]*sync.Mutex),
-	}, err
+	}, nil
 }
 
 func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader *multipart.FileHeader) (*types.FileMetadata, error) {
@@ -98,11 +108,11 @@ func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader 
 	}
 
 	// cache Merkle tree data for less intensive proof creation
-	// if err := sm.cacheMerkleTree(ctx, fileId, tree, len(fileData)); err != nil {
-	// 	return nil, fmt.Errorf("failed to save merkle tree: %w", err)
-	// }
+	if err := sm.cacheMerkleTree(ctx, fileId, tree, len(fileData)); err != nil {
+		return nil, fmt.Errorf("failed to save merkle tree: %w", err)
+	}
 
-	// create file metadata & store in Redis
+	// create file metadata & store in PebbleDB
 	metadata := &types.FileMetadata{
 		FID:         fileId,
 		FileName:    fileHeader.Filename,
@@ -114,9 +124,9 @@ func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader 
 		//MimeType:    fileHeader.Header.Get("Content-Type"), // [TBD]: keep this? or should always be octet-stream on delivery
 	}
 
-	// if err := sm.storeMetadata(ctx, metadata); err != nil {
-	// 	return nil, fmt.Errorf("failed to store metadata: %w", err)
-	// }
+	if err := sm.storeMetadata(ctx, metadata); err != nil {
+		return nil, fmt.Errorf("failed to store metadata: %w", err)
+	}
 
 	sm.logger.Info("File uploaded successfully with Merkle tree",
 		zap.String("file_id", fileId),
@@ -159,23 +169,33 @@ func (sm *StorageManager) GetFile(ctx context.Context, fileID string) (*types.Fi
 	return metadata, file, nil
 }
 
-func (sm *StorageManager) ListFiles(ctx context.Context, owner string, page, pageSize int) (*types.FileListResponse, error) {
-	// This would typically query a database
-	// For Redis implementation:
-	pattern := fmt.Sprintf("file:*:owner:%s", owner)
-	keys, err := sm.redis.Keys(ctx, pattern).Result()
+func (sm *StorageManager) ListFiles(ctx context.Context, page, pageSize int) (*types.FileListResponse, error) {
+	// Get all file keys
+	fileKeys, err := sm.db.Keys(ctx, filePrefix)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list files: %w", err)
 	}
+
+	// Collect metadata
+	var allFiles []types.FileMetadata
+	for _, key := range fileKeys {
+		fileID := strings.TrimPrefix(key, filePrefix)
+		metadata, err := sm.getMetadata(ctx, fileID)
+		if err == nil && metadata != nil {
+			allFiles = append(allFiles, *metadata)
+		}
+	}
+
+	total := len(allFiles)
 
 	// Calculate pagination
 	start := (page - 1) * pageSize
 	end := start + pageSize
 
-	if start >= len(keys) {
+	if start >= total {
 		return &types.FileListResponse{
 			Files:       []types.FileMetadata{},
-			Total:       int64(len(keys)),
+			Total:       int64(total),
 			Page:        page,
 			PageSize:    pageSize,
 			HasNext:     false,
@@ -183,37 +203,23 @@ func (sm *StorageManager) ListFiles(ctx context.Context, owner string, page, pag
 		}, nil
 	}
 
-	if end > len(keys) {
-		end = len(keys)
+	if end > total {
+		end = total
 	}
 
-	var files []types.FileMetadata
-	for i := start; i < end; i++ {
-		metadata, err := sm.getMetadata(ctx, keys[i])
-		if err == nil && metadata != nil {
-			files = append(files, *metadata)
-		}
-	}
+	files := allFiles[start:end]
 
 	return &types.FileListResponse{
 		Files:       files,
-		Total:       int64(len(keys)),
+		Total:       int64(total),
 		Page:        page,
 		PageSize:    pageSize,
-		HasNext:     end < len(keys),
+		HasNext:     end < total,
 		HasPrevious: page > 1,
 	}, nil
 }
 
-func (sm *StorageManager) DeleteFile(ctx context.Context, fileID, owner string) error {
-	metadata, err := sm.getMetadata(ctx, fileID)
-	if err != nil {
-		return err
-	}
-
-	if metadata.Owner != owner {
-		return fmt.Errorf("unauthorized to delete this file")
-	}
+func (sm *StorageManager) DeleteFile(ctx context.Context, fileID string) error {
 
 	// Delete physical file
 	filePath := filepath.Join(sm.config.DataDirectory, fileID)
@@ -221,10 +227,16 @@ func (sm *StorageManager) DeleteFile(ctx context.Context, fileID, owner string) 
 		sm.logger.Error("Failed to delete file", zap.String("file_id", fileID), zap.Error(err))
 	}
 
-	// Delete metadata from Redis
-	key := fmt.Sprintf("file:%s", fileID)
-	if err := sm.redis.Del(ctx, key).Err(); err != nil {
+	// Delete metadata from PebbleDB
+	fileKey := FileKey(fileID)
+	if err := sm.db.Delete(ctx, fileKey); err != nil {
 		return fmt.Errorf("failed to delete metadata: %w", err)
+	}
+
+	// Delete merkle tree data
+	merkleKey := MerkleKey(fileID)
+	if err := sm.db.Delete(ctx, merkleKey); err != nil {
+		sm.logger.Warn("Failed to delete merkle tree data", zap.String("file_id", fileID), zap.Error(err))
 	}
 
 	sm.logger.Info("File deleted", zap.String("file_id", fileID))
@@ -252,16 +264,35 @@ func (sm *StorageManager) GetStatus() (*types.ProviderStatus, error) {
 		return nil, err
 	}
 
-	// Get provider info from Redis
+	// Get provider info from PebbleDB
 	ctx := context.Background()
-	uptime, _ := sm.redis.Get(ctx, "provider:uptime").Float64()
-	peers, _ := sm.redis.Get(ctx, "provider:peers").Int()
+	uptime := 0.0
+	peers := 0
+
+	uptimeKey := ProviderKey("uptime")
+	if uptimeData, err := sm.db.Get(ctx, uptimeKey); err == nil {
+		if val, err := strconv.ParseFloat(string(uptimeData), 64); err == nil {
+			uptime = val
+		}
+	}
+
+	peersKey := ProviderKey("peers")
+	if peersData, err := sm.db.Get(ctx, peersKey); err == nil {
+		if val, err := strconv.Atoi(string(peersData)); err == nil {
+			peers = val
+		}
+	}
+
+	walletAddr := "0x..."
+	if sm.atlas != nil && sm.atlas.Wallet != nil {
+		walletAddr = sm.atlas.Wallet.GetAddress()
+	}
 
 	return &types.ProviderStatus{
 		ProviderID:   "provider_" + uuid.New().String()[:8],
-		Wallet:       "0x...", // Should come from your wallet integration
+		Wallet:       walletAddr,
 		Uptime:       uptime,
-		TotalStorage: int64(100 * 1024 * 1024 * 1024), // 100GB example
+		TotalStorage: sm.config.TotalSpace,
 		UsedStorage:  totalSize,
 		FilesCount:   fileCount,
 		IsOnline:     true,
@@ -271,29 +302,33 @@ func (sm *StorageManager) GetStatus() (*types.ProviderStatus, error) {
 	}, nil
 }
 
-// Helper methods for Redis
+// Helper methods for PebbleDB
 func (sm *StorageManager) storeMetadata(ctx context.Context, metadata *types.FileMetadata) error {
-	key := fmt.Sprintf("file:%s", metadata.FID)
+	key := FileKey(metadata.FID)
 
-	data, err := json.Marshal(metadata)
-	if err != nil {
+	// Store file metadata
+	if err := sm.db.SetJSON(ctx, key, metadata); err != nil {
 		return err
 	}
 
-	return sm.redis.Set(ctx, key, data, 0).Err()
+	return nil
 }
 
 func (sm *StorageManager) getMetadata(ctx context.Context, fileID string) (*types.FileMetadata, error) {
-	key := fmt.Sprintf("file:%s", fileID)
-	data, err := sm.redis.Get(ctx, key).Bytes()
-	if err != nil {
-		return nil, err
-	}
+	key := FileKey(fileID)
 
 	var metadata types.FileMetadata
-	if err := json.Unmarshal(data, &metadata); err != nil {
+	if err := sm.db.GetJSON(ctx, key, &metadata); err != nil {
 		return nil, err
 	}
 
 	return &metadata, nil
+}
+
+// Close closes the PebbleDB connection
+func (sm *StorageManager) Close() error {
+	if sm.db != nil {
+		return sm.db.Close()
+	}
+	return nil
 }

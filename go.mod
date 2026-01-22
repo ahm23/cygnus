@@ -162,7 +162,6 @@ require (
 	github.com/gofiber/fiber/v2 v2.52.10
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/redis/go-redis/v9 v9.17.2
 	github.com/spf13/viper v1.21.0
 	golang.org/x/sys v0.33.0 // indirect
 )

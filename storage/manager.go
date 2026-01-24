@@ -56,25 +56,26 @@ func NewStorageManager(cfg *config.Config, logger *zap.Logger, atlas *atlas.Atla
 	}, nil
 }
 
-func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader *multipart.FileHeader) (*types.FileMetadata, error) {
+func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader *multipart.FileHeader) (bool, error) {
 	// read entire file into memory
 	// [TBD]: is there a better way of doing this? imagine loading a 32GB file into memory :p
 	file, err := fileHeader.Open()
 	if err != nil {
-		return nil, fmt.Errorf("failed to open uploaded file: %w", err)
+		return false, fmt.Errorf("failed to open uploaded file: %w", err)
 	}
 	defer file.Close()
 
 	fileData, err := io.ReadAll(file)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
+		return false, fmt.Errorf("failed to read file: %w", err)
 	}
 	totalChunks := int(math.Ceil(float64(len(fileData)) / float64(types.ChunkSize)))
+	defer sm.validateFile(&fileId)
 
 	// build merkletree
 	tree, err := sm.buildMerkleTree(ctx, fileData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build merkle tree: %w", err)
+		return false, fmt.Errorf("failed to build merkle tree: %w", err)
 	}
 	merkleRoot := tree.Root()
 
@@ -82,34 +83,13 @@ func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader 
 	// [TBD]: make this a deterministic random chunk
 	merkleProof, err := sm.generateProof(tree, 0)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate file proof")
+		return false, fmt.Errorf("failed to generate file proof")
 	}
 
 	// save the file
 	filePath := filepath.Join(sm.config.DataDirectory, fileId)
 	if err := os.WriteFile(filePath, fileData, 0644); err != nil {
-		return nil, fmt.Errorf("failed to save file: %w", err)
-	}
-
-	// attest to having a file using an initial proof without challenge
-	msg := &storageTypes.MsgProveFile{
-		Creator:     sm.atlas.Wallet.GetAddress(),
-		ChallengeId: "",
-		FileId:      fileId,
-		Data:        fileData[:1024],
-		Hashes:      merkleProof.Hashes,
-		Chunk:       merkleProof.Index,
-	}
-	_, err = sm.atlas.Wallet.BroadcastTxGrpc(0, false, msg)
-	if err != nil {
-		// [TODO]: cleanup, delete saved file
-		fmt.Println(err.Error())
-		return nil, fmt.Errorf("failed to post initial file proof")
-	}
-
-	// cache Merkle tree data for less intensive proof creation
-	if err := sm.cacheMerkleTree(ctx, fileId, tree, len(fileData)); err != nil {
-		return nil, fmt.Errorf("failed to save merkle tree: %w", err)
+		return false, fmt.Errorf("failed to save file: %w", err)
 	}
 
 	// create file metadata & store in PebbleDB
@@ -125,16 +105,49 @@ func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader 
 	}
 
 	if err := sm.storeMetadata(ctx, metadata); err != nil {
-		return nil, fmt.Errorf("failed to store metadata: %w", err)
+		return false, fmt.Errorf("failed to store metadata: %w", err)
 	}
 
-	sm.logger.Info("File uploaded successfully with Merkle tree",
+	// cache Merkle tree data for less intensive proof creation
+	if err := sm.cacheMerkleTree(ctx, fileId, tree, len(fileData)); err != nil {
+		return true, fmt.Errorf("failed to save merkle tree: %w", err)
+	}
+
+	// attest to having a file using an initial proof without challenge
+	msg := &storageTypes.MsgProveFile{
+		Creator:     sm.atlas.Wallet.GetAddress(),
+		ChallengeId: "",
+		FileId:      fileId,
+		Data:        fileData[:1024],
+		Hashes:      merkleProof.Hashes,
+		Chunk:       merkleProof.Index,
+	}
+	_, err = sm.atlas.Wallet.BroadcastTxGrpc(0, false, msg)
+	if err != nil {
+		fmt.Println(err.Error())
+		return false, fmt.Errorf("failed to post initial file proof")
+	}
+
+	// success
+	sm.logger.Info("File created successfully",
 		zap.String("file_id", fileId),
 		zap.Int64("size", fileHeader.Size),
 		zap.Int("chunks", totalChunks),
 		zap.String("merkle_root", hex.EncodeToString(merkleRoot)))
 
-	return metadata, nil
+	return true, nil
+}
+
+func (sm *StorageManager) validateFile(fileId *string) {
+	// check if file exists and is on this provider on-chain
+	// -- delete file & remove from DB
+	// check if file exists in PebbleDB
+	// -- delete file
+	// check if file exists in DataDirectory
+	// -- do nothing
+
+	// if not on-chain || not pebble, delete
+	// if not on-chain remove
 }
 
 func (sm *StorageManager) generateProof(tree *merkletree.MerkleTree, index int64) (*merkletree.Proof, error) {

@@ -119,10 +119,6 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 		return nil, fmt.Errorf("GRPC connection not established - cannot simulate gas")
 	}
 
-	k, _ := w.clientCtx.Keyring.Key("cygnus")
-	fmt.Println(w.clientCtx.FromAddress)
-	fmt.Println("Key for `cygnus`: ", k)
-	fmt.Println("Sequence: ", sequence)
 	// simulate and update gas
 	simulatedGas, adjusted, err := tx.CalculateGas(w.clientCtx, txf, msgs...)
 	if err != nil {
@@ -135,12 +131,33 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 
 	txf = txf.WithGas(adjusted)
 
+	k, _ := w.clientCtx.Keyring.Key("cygnus")
+	fmt.Println(w.clientCtx.FromAddress)
+	fmt.Println("Key for `cygnus`: ", k)
+	fmt.Println("Sequence: ", sequence)
+
+	info, err := w.clientCtx.Keyring.Key("cygnus")
+	if err != nil {
+		panic(err)
+	}
+
+	keyAddr, err := info.GetAddress()
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("======== Keyring Debug =========")
+	fmt.Println("Keyring address:      ", keyAddr.String())
+	fmt.Println("ClientCtx FromAddress:", w.clientCtx.FromAddress.String())
+	fmt.Println("Funded address:       ", "atl1wm4gvkczw3neeqmyuekxsxduvv9sh8sjcdvzdp")
+
 	// build unsigned transaction
 	txb, err := txf.BuildUnsignedTx(msgs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build tx: %w", err)
 	}
-	fmt.Println("\nTX:\n", txb.GetTx())
+	pk, _ := txb.GetTx().GetPubKeys()
+	fmt.Println("\nTX:\n", pk)
 	// sign the transaction
 	err = tx.Sign(ctx, txf, "cygnus", txb, true)
 	if err != nil {

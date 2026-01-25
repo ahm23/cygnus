@@ -56,6 +56,9 @@ func NewStorageManager(cfg *config.Config, logger *zap.Logger, atlas *atlas.Atla
 	}, nil
 }
 
+/*
+CreateFile saves the file on-disk, indexes it in the local file database, and submits a proof to Atlas Protocol.
+*/
 func (sm *StorageManager) CreateFile(ctx context.Context, fileId string, fileHeader *multipart.FileHeader) (bool, error) {
 	// read entire file into memory
 	// [TBD]: is there a better way of doing this? imagine loading a 32GB file into memory :p
@@ -64,7 +67,6 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileId string, fileHea
 		return false, fmt.Errorf("failed to open uploaded file: %w", err)
 	}
 	defer file.Close()
-
 	fileData, err := io.ReadAll(file)
 	if err != nil {
 		return false, fmt.Errorf("failed to read file: %w", err)
@@ -92,18 +94,17 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileId string, fileHea
 		return false, fmt.Errorf("failed to save file: %w", err)
 	}
 
-	// create file metadata & store in PebbleDB
+	// create file metadata & store in file database
 	metadata := &types.FileMetadata{
 		FID:         fileId,
 		FileName:    fileHeader.Filename,
 		Size:        fileHeader.Size,
 		Chunks:      totalChunks,
 		MerkleRoot:  hex.EncodeToString(merkleRoot),
-		UploadedAt:  time.Now(), // [TBD]: should this be representative of the inital request time? merkle tree can take a few seconds for huge files
+		UploadedAt:  time.Now(),
 		IsAvailable: true,
-		//MimeType:    fileHeader.Header.Get("Content-Type"), // [TBD]: keep this? or should always be octet-stream on delivery
+		// [TBD]: include MimeType? or should always be octet-stream on delivery?
 	}
-
 	if err := sm.storeMetadata(ctx, metadata); err != nil {
 		return false, fmt.Errorf("failed to store metadata: %w", err)
 	}
@@ -114,6 +115,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileId string, fileHea
 	}
 
 	// attest to having a file using an initial proof without challenge
+	// TODO: move this logic outside this function
 	msg := &storageTypes.MsgProveFile{
 		Creator:     sm.atlas.Wallet.GetAddress(),
 		ChallengeId: "",
@@ -138,44 +140,9 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileId string, fileHea
 	return true, nil
 }
 
-func (sm *StorageManager) VerifyFileIntegrity(ctx context.Context, fileID *string) (bool, error) {
-	filePath := filepath.Join(sm.config.DataDirectory, *fileID)
-
-	if _, err := sm.atlas.QueryClients.Storage.File(ctx, &storageTypes.QueryFileRequest{Fid: *fileID}); err != nil {
-		sm.logger.Warn("File integrity check failed for "+*fileID+". File does not exist on-chain.", zap.Error(err))
-	} else if err := sm.db.GetJSON(ctx, FileKey(*fileID), nil); err != nil {
-		sm.logger.Warn("File integrity check failed for "+*fileID+". File does not exist in database.", zap.Error(err))
-	} else if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		sm.logger.Warn("File integrity check failed for "+*fileID+". File does not exist on disk.", zap.Error(err))
-	} else {
-		return true, nil
-	}
-
-	return false, sm.DeleteFile(ctx, *fileID)
-}
-
-// func (sm *StorageManager) DeleteFile(ctx context.Context, fileId *string) {
-
-// 	err := sm.db.Delete(ctx, FileKey(*fileId))
-// 	if err != nil {
-// 		// TODO: log database error
-// 	}
-
-// }
-
-func (sm *StorageManager) generateProof(tree *merkletree.MerkleTree, index int64) (*merkletree.Proof, error) {
-	if tree == nil {
-		// [TODO]: load tree from cache or create new tree from file
-	}
-
-	proof, err := tree.GenerateProof(tree.Data[index], 0)
-	if err != nil {
-		return nil, err
-	}
-
-	return proof, nil
-}
-
+/*
+GetFile gets the metadata and a readonly file handle for the specified file.
+*/
 func (sm *StorageManager) GetFile(ctx context.Context, fileID string) (*types.FileMetadata, io.ReadCloser, error) {
 	metadata, err := sm.getMetadata(ctx, fileID)
 	if err != nil {
@@ -195,56 +162,9 @@ func (sm *StorageManager) GetFile(ctx context.Context, fileID string) (*types.Fi
 	return metadata, file, nil
 }
 
-func (sm *StorageManager) ListFiles(ctx context.Context, page, pageSize int) (*types.FileListResponse, error) {
-	// Get all file keys
-	fileKeys, err := sm.db.Keys(ctx, filePrefix)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list files: %w", err)
-	}
-
-	// Collect metadata
-	var allFiles []types.FileMetadata
-	for _, key := range fileKeys {
-		fileID := strings.TrimPrefix(key, filePrefix)
-		metadata, err := sm.getMetadata(ctx, fileID)
-		if err == nil && metadata != nil {
-			allFiles = append(allFiles, *metadata)
-		}
-	}
-
-	total := len(allFiles)
-
-	// Calculate pagination
-	start := (page - 1) * pageSize
-	end := start + pageSize
-
-	if start >= total {
-		return &types.FileListResponse{
-			Files:       []types.FileMetadata{},
-			Total:       int64(total),
-			Page:        page,
-			PageSize:    pageSize,
-			HasNext:     false,
-			HasPrevious: page > 1,
-		}, nil
-	}
-
-	if end > total {
-		end = total
-	}
-
-	files := allFiles[start:end]
-
-	return &types.FileListResponse{
-		Files:       files,
-		Total:       int64(total),
-		Page:        page,
-		PageSize:    pageSize,
-		HasNext:     end < total,
-		HasPrevious: page > 1,
-	}, nil
-}
-
+/*
+DeleteFile deletes the file all over
+*/
 func (sm *StorageManager) DeleteFile(ctx context.Context, fileID string) error {
 	// deleteMsg := &storageTypes.MsgRemoveProver{}
 	// _, err := sm.atlas.Wallet.BroadcastTxGrpc(0, false, deleteMsg)
@@ -276,6 +196,79 @@ func (sm *StorageManager) DeleteFile(ctx context.Context, fileID string) error {
 	return nil
 }
 
+/*
+ListFiles returns a list of files. This is paginated.
+*/
+func (sm *StorageManager) ListFiles(ctx context.Context, page, pageSize int) (*types.FileListResponse, error) {
+	// get all file keys
+	fileKeys, err := sm.db.Keys(ctx, filePrefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list files: %w", err)
+	}
+
+	// collect metadata
+	var allFiles []types.FileMetadata
+	for _, key := range fileKeys {
+		fileID := strings.TrimPrefix(key, filePrefix)
+		metadata, err := sm.getMetadata(ctx, fileID)
+		if err == nil && metadata != nil {
+			allFiles = append(allFiles, *metadata)
+		}
+	}
+	total := len(allFiles)
+
+	// calculate pagination
+	start := (page - 1) * pageSize
+	end := start + pageSize
+
+	if start >= total {
+		return &types.FileListResponse{
+			Files:       []types.FileMetadata{},
+			Total:       int64(total),
+			Page:        page,
+			PageSize:    pageSize,
+			HasNext:     false,
+			HasPrevious: page > 1,
+		}, nil
+	}
+	if end > total {
+		end = total
+	}
+
+	files := allFiles[start:end]
+
+	return &types.FileListResponse{
+		Files:       files,
+		Total:       int64(total),
+		Page:        page,
+		PageSize:    pageSize,
+		HasNext:     end < total,
+		HasPrevious: page > 1,
+	}, nil
+}
+
+/*
+VerifyFileIntegrity validates a file's existence on-disk, on-chain, and in the local file database.
+*/
+func (sm *StorageManager) VerifyFileIntegrity(ctx context.Context, fileID *string) (bool, error) {
+	filePath := filepath.Join(sm.config.DataDirectory, *fileID)
+
+	if _, err := sm.atlas.QueryClients.Storage.File(ctx, &storageTypes.QueryFileRequest{Fid: *fileID}); err != nil {
+		sm.logger.Warn("File integrity check failed for "+*fileID+". File does not exist on-chain.", zap.Error(err))
+	} else if err := sm.db.GetJSON(ctx, FileKey(*fileID), nil); err != nil {
+		sm.logger.Warn("File integrity check failed for "+*fileID+". File does not exist in database.", zap.Error(err))
+	} else if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		sm.logger.Warn("File integrity check failed for "+*fileID+". File does not exist on disk.", zap.Error(err))
+	} else {
+		return true, nil
+	}
+
+	return false, sm.DeleteFile(ctx, *fileID)
+}
+
+/*
+Some random AI generated bullshit
+*/
 func (sm *StorageManager) GetStatus() (*types.ProviderStatus, error) {
 	// Calculate storage usage
 	var totalSize int64
@@ -364,4 +357,17 @@ func (sm *StorageManager) Close() error {
 		return sm.db.Close()
 	}
 	return nil
+}
+
+func (sm *StorageManager) generateProof(tree *merkletree.MerkleTree, index int64) (*merkletree.Proof, error) {
+	if tree == nil {
+		// [TODO]: load tree from cache or create new tree from file
+	}
+
+	proof, err := tree.GenerateProof(tree.Data[index], 0)
+	if err != nil {
+		return nil, err
+	}
+
+	return proof, nil
 }

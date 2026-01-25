@@ -109,10 +109,10 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 		WithGasAdjustment(1.2).
 		WithFees("2000uatl"). // Adjust based on your chain
 		WithKeybase(w.clientCtx.Keyring).
+		WithAccountNumber(w.accountNumber).
+		WithSequence(sequence).
 		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT).
 		WithSimulateAndExecute(true).
-		// WithAccountNumber(w.accountNumber).
-		// WithSequence(sequence).
 		WithFromName("cygnus")
 
 	if w.clientCtx.GRPCClient == nil {
@@ -131,26 +131,6 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 
 	txf = txf.WithGas(adjusted)
 
-	k, _ := w.clientCtx.Keyring.Key("cygnus")
-	fmt.Println(w.clientCtx.FromAddress)
-	fmt.Println("Key for `cygnus`: ", k)
-	fmt.Println("Sequence: ", sequence)
-
-	info, err := w.clientCtx.Keyring.Key("cygnus")
-	if err != nil {
-		panic(err)
-	}
-
-	keyAddr, err := info.GetAddress()
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Println("======== Keyring Debug =========")
-	fmt.Println("Keyring address:      ", keyAddr.String())
-	fmt.Println("ClientCtx FromAddress:", w.clientCtx.FromAddress.String())
-	fmt.Println("Funded address:       ", "atl1wm4gvkczw3neeqmyuekxsxduvv9sh8sjcdvzdp")
-
 	// build unsigned transaction
 	txb, err := txf.BuildUnsignedTx(msgs...)
 	if err != nil {
@@ -158,6 +138,33 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 	}
 	pk, _ := txb.GetTx().GetPubKeys()
 	fmt.Println("\nTX:\n", pk)
+
+	// Before signing, print all signing data
+	fmt.Println("=== Signing Debug ===")
+	fmt.Printf("Chain ID: %s\n", txf.ChainID())
+	fmt.Printf("Account Number: %d\n", txf.AccountNumber())
+	fmt.Printf("Sequence: %d\n", txf.Sequence())
+	fmt.Printf("From Name: %s\n", txf.FromName())
+	fmt.Printf("Sign Mode: %v\n", txf.SignMode())
+
+	// // Try to sign manually to see error
+	// signerData := signing1.SignerData{
+	// 		ChainID:       txf.ChainID(),
+	// 		AccountNumber: txf.AccountNumber(),
+	// 		Sequence:      txf.Sequence(),
+	// }
+
+	// // Get sign bytes
+	// signBytes, err := w.clientCtx.TxConfig.SignModeHandler().GetSignBytes(ctx,
+	// 		txf.SignMode(),
+	// 		signerData,
+	// 		txb.GetTx(),
+	// )
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sign bytes: %w", err)
+	}
+	// fmt.Printf("Sign bytes length: %d\n", len(signBytes))
+
 	// sign the transaction
 	err = tx.Sign(ctx, txf, "cygnus", txb, true)
 	if err != nil {

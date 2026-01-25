@@ -119,7 +119,10 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 		return nil, fmt.Errorf("GRPC connection not established - cannot simulate gas")
 	}
 
+	k, _ := w.clientCtx.Keyring.Key("cygnus")
 	fmt.Println(w.clientCtx.FromAddress)
+	fmt.Println("Key for `cygnus`: ", k)
+	fmt.Println("Sequence: ", sequence)
 	// simulate and update gas
 	simulatedGas, adjusted, err := tx.CalculateGas(w.clientCtx, txf, msgs...)
 	if err != nil {
@@ -137,7 +140,7 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to build tx: %w", err)
 	}
-
+	fmt.Println("\nTX:\n", txb.GetTx())
 	// sign the transaction
 	err = tx.Sign(ctx, txf, "cygnus", txb, true)
 	if err != nil {
@@ -145,6 +148,7 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 	}
 
 	// Encode
+	fmt.Println("\nEncoding...")
 	txBytes, err := w.clientCtx.TxConfig.TxEncoder()(txb.GetTx())
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode tx: %w", err)

@@ -10,3 +10,5 @@ cd $HOME/go/bin
 
 
 CYGNUS NODE 1
+=============
+./nebulixd tx bank send atl1wszdmd04uxggyz2hq8u4ss30f8dy59zz28mn2x atl1wm4gvkczw3neeqmyuekxsxduvv9sh8sjcdvzdp 10000000uatl

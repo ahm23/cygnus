@@ -111,8 +111,8 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 		WithKeybase(w.clientCtx.Keyring).
 		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT).
 		WithSimulateAndExecute(true).
-		WithAccountNumber(w.accountNumber).
-		WithSequence(sequence).
+		// WithAccountNumber(w.accountNumber).
+		// WithSequence(sequence).
 		WithFromName("cygnus")
 
 	if w.clientCtx.GRPCClient == nil {

@@ -107,7 +107,7 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 		WithChainID(w.clientCtx.ChainID).
 		WithGas(200000). // Default gas, will be adjusted by simulation
 		WithGasAdjustment(1.2).
-		WithFees("2000unblx"). // Adjust based on your chain
+		WithFees("2000uatl"). // Adjust based on your chain
 		WithKeybase(w.clientCtx.Keyring).
 		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT).
 		WithSimulateAndExecute(true).

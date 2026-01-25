@@ -86,9 +86,9 @@ func DefaultChainConfig() ChainConfig {
 		ChainId:        "nebulix",
 		RPCAddr:        "http://localhost:26657",
 		GRPCAddr:       "localhost:9090",
-		GasPrice:       "0.02unblx",
+		GasPrice:       "0.02uatl",
 		GasAdjustment:  1.5,
-		Bech32Prefix:   "nblx",
+		Bech32Prefix:   "atl",
 		KeyringBackend: "test",
 	}
 }

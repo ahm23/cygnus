@@ -56,7 +56,7 @@ func NewStorageManager(cfg *config.Config, logger *zap.Logger, atlas *atlas.Atla
 	}, nil
 }
 
-func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader *multipart.FileHeader) (bool, error) {
+func (sm *StorageManager) CreateFile(ctx context.Context, fileId string, fileHeader *multipart.FileHeader) (bool, error) {
 	// read entire file into memory
 	// [TBD]: is there a better way of doing this? imagine loading a 32GB file into memory :p
 	file, err := fileHeader.Open()
@@ -70,7 +70,7 @@ func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader 
 		return false, fmt.Errorf("failed to read file: %w", err)
 	}
 	totalChunks := int(math.Ceil(float64(len(fileData)) / float64(types.ChunkSize)))
-	defer sm.validateFile(&fileId)
+	defer sm.VerifyFileIntegrity(ctx, &fileId)
 
 	// build merkletree
 	tree, err := sm.buildMerkleTree(ctx, fileData)
@@ -138,17 +138,30 @@ func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader 
 	return true, nil
 }
 
-func (sm *StorageManager) validateFile(fileId *string) {
-	// check if file exists and is on this provider on-chain
-	// -- delete file & remove from DB
-	// check if file exists in PebbleDB
-	// -- delete file
-	// check if file exists in DataDirectory
-	// -- do nothing
+func (sm *StorageManager) VerifyFileIntegrity(ctx context.Context, fileID *string) (bool, error) {
+	filePath := filepath.Join(sm.config.DataDirectory, *fileID)
 
-	// if not on-chain || not pebble, delete
-	// if not on-chain remove
+	if _, err := sm.atlas.QueryClients.Storage.File(ctx, &storageTypes.QueryFileRequest{Fid: *fileID}); err != nil {
+		sm.logger.Warn("File integrity check failed for "+*fileID+". File does not exist on-chain.", zap.Error(err))
+	} else if err := sm.db.GetJSON(ctx, FileKey(*fileID), nil); err != nil {
+		sm.logger.Warn("File integrity check failed for "+*fileID+". File does not exist in database.", zap.Error(err))
+	} else if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		sm.logger.Warn("File integrity check failed for "+*fileID+". File does not exist on disk.", zap.Error(err))
+	} else {
+		return true, nil
+	}
+
+	return false, sm.DeleteFile(ctx, *fileID)
 }
+
+// func (sm *StorageManager) DeleteFile(ctx context.Context, fileId *string) {
+
+// 	err := sm.db.Delete(ctx, FileKey(*fileId))
+// 	if err != nil {
+// 		// TODO: log database error
+// 	}
+
+// }
 
 func (sm *StorageManager) generateProof(tree *merkletree.MerkleTree, index int64) (*merkletree.Proof, error) {
 	if tree == nil {
@@ -233,8 +246,15 @@ func (sm *StorageManager) ListFiles(ctx context.Context, page, pageSize int) (*t
 }
 
 func (sm *StorageManager) DeleteFile(ctx context.Context, fileID string) error {
+	// deleteMsg := &storageTypes.MsgRemoveProver{}
+	// _, err := sm.atlas.Wallet.BroadcastTxGrpc(0, false, deleteMsg)
+	// TODO: handle file not exist error (OK)
+	// if err != nil {
+	// 	fmt.Println(err.Error())
+	// 	return false, fmt.Errorf("failed to post initial file proof")
+	// }
 
-	// Delete physical file
+	// Delete file on disk
 	filePath := filepath.Join(sm.config.DataDirectory, fileID)
 	if err := os.Remove(filePath); err != nil {
 		sm.logger.Error("Failed to delete file", zap.String("file_id", fileID), zap.Error(err))
@@ -246,7 +266,7 @@ func (sm *StorageManager) DeleteFile(ctx context.Context, fileID string) error {
 		return fmt.Errorf("failed to delete metadata: %w", err)
 	}
 
-	// Delete merkle tree data
+	// Delete cached merkle tree data
 	merkleKey := MerkleKey(fileID)
 	if err := sm.db.Delete(ctx, merkleKey); err != nil {
 		sm.logger.Warn("Failed to delete merkle tree data", zap.String("file_id", fileID), zap.Error(err))

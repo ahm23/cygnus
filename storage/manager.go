@@ -81,6 +81,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileId string, fileHea
 		return false, fmt.Errorf("failed to build merkle tree: %w", err)
 	}
 	merkleRoot := tree.Root()
+	fmt.Println("Merkle Root:", hex.EncodeToString(merkleRoot))
 
 	// generate proof of first chunk
 	// [TBD]: make this a deterministic random chunk

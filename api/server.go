@@ -22,10 +22,10 @@ func NewAPI(cfg *config.APIConfig) *API {
 	// [TODO]: alow cors
 	// Create Fiber app
 	srv := fiber.New(fiber.Config{
-		AppName: "Cygnus DePIN Storage Provider",
-		// ReadTimeout:  cfg.Server.ReadTimeout,
-		// WriteTimeout: cfg.Server.WriteTimeout,
-		// IdleTimeout:  cfg.Server.IdleTimeout,
+		AppName:      "Cygnus DePIN Storage Provider",
+		ReadTimeout:  30 * time.Minute,
+		WriteTimeout: 30 * time.Minute,
+		IdleTimeout:  30 * time.Minute, // Keep connections alive
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			// logger.Error("HTTP error",
 			// 	zap.String("path", c.Path()),

@@ -2,6 +2,7 @@ package api
 
 import (
 	"cygnus/types"
+	"fmt"
 	storagetypes "nebulix/x/storage/types"
 
 	"github.com/gofiber/fiber/v2"
@@ -16,6 +17,7 @@ func (m *Middleware) ValidateStagedFileExists(c *fiber.Ctx) error {
 	if fileId == "" {
 		return c.Status(400).SendString("Missing file ID in request header!")
 	}
+	fmt.Println("Finding File...", fileId)
 	req := storagetypes.QueryFileRequest{Fid: fileId}
 	res, err := m.AtlasQueryClients.Storage.File(c.Context(), &req)
 	if err != nil {

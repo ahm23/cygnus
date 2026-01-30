@@ -25,6 +25,7 @@ func NewHandler(storageManager *storage.StorageManager, logger *zap.Logger, cfg 
 }
 
 func (h *Handler) UploadFile(c *fiber.Ctx) error {
+	fmt.Println("Request validation...")
 	// ---- Request Validation ---- //
 	// REQUIRED: fileId
 	fileId := c.FormValue("fid", "")
@@ -51,6 +52,7 @@ func (h *Handler) UploadFile(c *fiber.Ctx) error {
 	}
 
 	// ---- Request Handling ---- //
+	fmt.Println("Creating File...", fileId)
 	metadata, err := h.storageManager.CreateFile(c.Context(), fileId, fileHeader)
 	if err != nil {
 		fmt.Println(err)

@@ -41,6 +41,7 @@ func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*me
 		chunkHash := hasher.Sum(nil)
 
 		fmt.Println("leaf:", hex.EncodeToString(chunkHash))
+		fmt.Println("len:", len(chunk))
 		leaves = append(leaves, chunkHash)
 	}
 

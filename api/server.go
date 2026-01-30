@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 )
 
 type API struct {
@@ -38,6 +39,8 @@ func NewAPI(cfg *config.APIConfig) *API {
 			})
 		},
 	})
+
+	srv.Use(cors.New())
 
 	return &API{
 		port: cfg.Port,

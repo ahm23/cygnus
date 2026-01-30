@@ -27,6 +27,7 @@ func NewAPI(cfg *config.APIConfig) *API {
 		WriteTimeout:                 30 * time.Minute,
 		IdleTimeout:                  30 * time.Minute, // Keep connections alive
 		DisablePreParseMultipartForm: false,
+		BodyLimit:                    100 * 1024 * 1024,
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			// logger.Error("HTTP error",
 			// 	zap.String("path", c.Path()),

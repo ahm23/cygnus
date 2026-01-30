@@ -109,6 +109,7 @@ func (app *App) Start() error {
 		log.Info().Err(err).Msg("Provider does not exist on network or is not connected...")
 		err := initProviderOnChain(app.atlas.Wallet, app.cfg.Ip, app.cfg.TotalSpace)
 		if err != nil {
+			log.Error().Err(err)
 			return err
 		}
 	} else {

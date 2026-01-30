@@ -7,3 +7,8 @@ cd $HOME/go/bin
 
 ./nebulixd tx bank send atl1wszdmd04uxggyz2hq8u4ss30f8dy59zz28mn2x atl13ejhye4klzttcefutpkdh3awxs5f3kjxyky73q 100000uatl
 ./nebulixd tx storage buy-storage atl13ejhye4klzttcefutpkdh3awxs5f3kjxyky73q 720 1000000000 false --from alice --broadcast-mode sync
+
+
+CYGNUS NODE 1
+=============
+./nebulixd tx bank send atl1wszdmd04uxggyz2hq8u4ss30f8dy59zz28mn2x atl1wm4gvkczw3neeqmyuekxsxduvv9sh8sjcdvzdp 10000000uatl

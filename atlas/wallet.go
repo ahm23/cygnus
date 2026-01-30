@@ -107,19 +107,18 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 		WithChainID(w.clientCtx.ChainID).
 		WithGas(200000). // Default gas, will be adjusted by simulation
 		WithGasAdjustment(1.2).
-		WithFees("2000unblx"). // Adjust based on your chain
+		WithFees("2000uatl"). // Adjust based on your chain
 		WithKeybase(w.clientCtx.Keyring).
-		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT).
-		WithSimulateAndExecute(true).
 		WithAccountNumber(w.accountNumber).
 		WithSequence(sequence).
+		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT).
+		WithSimulateAndExecute(true).
 		WithFromName("cygnus")
 
 	if w.clientCtx.GRPCClient == nil {
 		return nil, fmt.Errorf("GRPC connection not established - cannot simulate gas")
 	}
 
-	fmt.Println(w.clientCtx.FromAddress)
 	// simulate and update gas
 	simulatedGas, adjusted, err := tx.CalculateGas(w.clientCtx, txf, msgs...)
 	if err != nil {
@@ -137,6 +136,34 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to build tx: %w", err)
 	}
+	pk, _ := txb.GetTx().GetPubKeys()
+	fmt.Println("\nTX:\n", pk)
+
+	// Before signing, print all signing data
+	fmt.Println("=== Signing Debug ===")
+	fmt.Printf("Chain ID: %s\n", txf.ChainID())
+	fmt.Printf("Account Number: %d\n", txf.AccountNumber())
+	fmt.Printf("Sequence: %d\n", txf.Sequence())
+	fmt.Printf("From Name: %s\n", txf.FromName())
+	fmt.Printf("Sign Mode: %v\n", txf.SignMode())
+
+	// // Try to sign manually to see error
+	// signerData := signing1.SignerData{
+	// 		ChainID:       txf.ChainID(),
+	// 		AccountNumber: txf.AccountNumber(),
+	// 		Sequence:      txf.Sequence(),
+	// }
+
+	// // Get sign bytes
+	// signBytes, err := w.clientCtx.TxConfig.SignModeHandler().GetSignBytes(ctx,
+	// 		txf.SignMode(),
+	// 		signerData,
+	// 		txb.GetTx(),
+	// )
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sign bytes: %w", err)
+	}
+	// fmt.Printf("Sign bytes length: %d\n", len(signBytes))
 
 	// sign the transaction
 	err = tx.Sign(ctx, txf, "cygnus", txb, true)
@@ -145,6 +172,7 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 	}
 
 	// Encode
+	fmt.Println("\nEncoding...")
 	txBytes, err := w.clientCtx.TxConfig.TxEncoder()(txb.GetTx())
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode tx: %w", err)

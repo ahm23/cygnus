@@ -51,7 +51,7 @@ func (h *Handler) UploadFile(c *fiber.Ctx) error {
 	}
 
 	// ---- Request Handling ---- //
-	metadata, err := h.storageManager.Upload(c.Context(), fileId, fileHeader)
+	metadata, err := h.storageManager.CreateFile(c.Context(), fileId, fileHeader)
 	if err != nil {
 		fmt.Println(err)
 		h.logger.Error("Failed to upload file", zap.Error(err))

@@ -58,7 +58,7 @@ func (a *API) Close() error {
 func (a *API) Serve() {
 	// defer log.Info().Msg("API module stopped")
 	fmt.Println("WAHT THE FUCAAACK")
-	err := a.srv.Listen(":3333")
+	err := a.srv.Listen("127.0.0.1:3333")
 	if err != nil {
 		if !errors.Is(err, http.ErrServerClosed) {
 			fmt.Println("ERROR STARTING SERVER")

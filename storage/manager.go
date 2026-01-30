@@ -73,6 +73,7 @@ func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader 
 	defer sm.validateFile(&fileId)
 
 	// build merkletree
+	fmt.Println("Building MerkleTree....")
 	tree, err := sm.buildMerkleTree(ctx, fileData)
 	if err != nil {
 		return false, fmt.Errorf("failed to build merkle tree: %w", err)
@@ -81,12 +82,14 @@ func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader 
 
 	// generate proof of first chunk
 	// [TBD]: make this a deterministic random chunk
+	fmt.Println("Generating Proof....")
 	merkleProof, err := sm.generateProof(tree, 0)
 	if err != nil {
 		return false, fmt.Errorf("failed to generate file proof")
 	}
 
 	// save the file
+	fmt.Println("Saving File....")
 	filePath := filepath.Join(sm.config.DataDirectory, fileId)
 	if err := os.WriteFile(filePath, fileData, 0644); err != nil {
 		return false, fmt.Errorf("failed to save file: %w", err)
@@ -104,16 +107,19 @@ func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader 
 		//MimeType:    fileHeader.Header.Get("Content-Type"), // [TBD]: keep this? or should always be octet-stream on delivery
 	}
 
+	fmt.Println("Storing Metadata....")
 	if err := sm.storeMetadata(ctx, metadata); err != nil {
 		return false, fmt.Errorf("failed to store metadata: %w", err)
 	}
 
 	// cache Merkle tree data for less intensive proof creation
+	fmt.Println("Caching MerkleTree....")
 	if err := sm.cacheMerkleTree(ctx, fileId, tree, len(fileData)); err != nil {
 		return true, fmt.Errorf("failed to save merkle tree: %w", err)
 	}
 
 	// attest to having a file using an initial proof without challenge
+	fmt.Println("Proving File....")
 	msg := &storageTypes.MsgProveFile{
 		Creator:     sm.atlas.Wallet.GetAddress(),
 		ChallengeId: "",
@@ -128,6 +134,7 @@ func (sm *StorageManager) Upload(ctx context.Context, fileId string, fileHeader 
 		return false, fmt.Errorf("failed to post initial file proof")
 	}
 
+	fmt.Println("BINGO!")
 	// success
 	sm.logger.Info("File created successfully",
 		zap.String("file_id", fileId),

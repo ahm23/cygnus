@@ -126,7 +126,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileId string, fileHea
 	msg := &storageTypes.MsgProveFile{
 		Creator:     sm.atlas.Wallet.GetAddress(),
 		ChallengeId: "",
-		FileId:      fileId,
+		Fid:         fileId,
 		Data:        fileData[:1024],
 		Hashes:      merkleProof.Hashes,
 		Chunk:       merkleProof.Index,

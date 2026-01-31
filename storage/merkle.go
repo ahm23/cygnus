@@ -46,6 +46,8 @@ func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*me
 		leaves = append(leaves, chunkHash)
 	}
 
+	fmt.Println("Leaves:", leaves)
+
 	// create merkle tree
 	tree, err := merkletree.NewUsing(
 		leaves,

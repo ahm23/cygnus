@@ -131,6 +131,10 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileId string, fileHea
 		Hashes:      merkleProof.Hashes,
 		Chunk:       merkleProof.Index,
 	}
+	fmt.Println("Fid:", fileId)
+	fmt.Println("Merkle:", hex.EncodeToString(merkleRoot))
+	fmt.Println("Chunk:", merkleProof.Index)
+
 	_, err = sm.atlas.Wallet.BroadcastTxGrpc(0, false, msg)
 	if err != nil {
 		fmt.Println(err.Error())

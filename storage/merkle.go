@@ -46,6 +46,10 @@ func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*me
 		leaves = append(leaves, chunkHash)
 	}
 
+	if len(leaves)%2 == 1 {
+		leaves = append(leaves, leaves[len(leaves)-1])
+	}
+
 	fmt.Println("Leaves:", leaves)
 
 	// create merkle tree

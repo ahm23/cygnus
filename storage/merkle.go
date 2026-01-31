@@ -55,7 +55,9 @@ func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*me
 	if err != nil {
 		return nil, fmt.Errorf("failed to create merkle tree: %w", err)
 	}
-
+	fmt.Println(tree.Nodes)
+	fmt.Println(tree.Sorted)
+	fmt.Println(tree.String())
 	merkleRoot := tree.Root()
 
 	sm.logger.Debug("Merkle tree created",

@@ -129,7 +129,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileId string, fileHea
 		Fid:         fileId,
 		Data:        fileData[:1024],
 		Hashes:      merkleProof.Siblings,
-		Chunk:       merkleProof.Path,
+		Chunk:       uint64(merkleProof.Path),
 	}
 	fmt.Println("Fid:", fileId)
 	fmt.Println("Merkle:", hex.EncodeToString(merkleRoot))

@@ -2,11 +2,8 @@ module cygnus
 
 go 1.24.0
 
-// merkletree blake3 support
-replace github.com/wealdtech/go-merkletree/v2 => github.com/TheMarstonConnell/go-merkletree/v2 v2.0.0-20250829184252-ad65f46fbd22
-
 require (
-	github.com/ahm23/go-merkletree-xxh v0.0.2
+	github.com/ahm23/go-merkletree-xxh v0.0.3
 	github.com/cockroachdb/pebble v1.1.5
 	github.com/cosmos/cosmos-sdk v0.53.4
 	github.com/cosmos/go-bip39 v1.0.0

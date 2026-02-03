@@ -376,7 +376,7 @@ func (sm *StorageManager) generateProof(tree *merkletree.MerkleTree, index int64
 		// [TODO]: load tree from cache or create new tree from file
 	}
 
-	proof, err := tree.Proof(tree.Leaves[index])
+	proof, err := tree.Proof(0)
 	if err != nil {
 		return nil, err
 	}

@@ -6,13 +6,13 @@ go 1.24.0
 replace github.com/wealdtech/go-merkletree/v2 => github.com/TheMarstonConnell/go-merkletree/v2 v2.0.0-20250829184252-ad65f46fbd22
 
 require (
+	github.com/ahm23/go-merkletree-xxh v0.0.1
 	github.com/cockroachdb/pebble v1.1.5
 	github.com/cosmos/cosmos-sdk v0.53.4
 	github.com/cosmos/go-bip39 v1.0.0
 	github.com/google/uuid v1.6.0
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/cobra v1.9.1
-	github.com/wealdtech/go-merkletree/v2 v2.0.0-00010101000000-000000000000
 	github.com/zeebo/blake3 v0.2.4
 	go.uber.org/zap v1.19.1
 	golang.org/x/term v0.32.0
@@ -101,7 +101,6 @@ require (
 	github.com/hdevalence/ed25519consensus v0.2.0 // indirect
 	github.com/huandu/skiplist v1.2.1 // indirect
 	github.com/iancoleman/strcase v0.3.0 // indirect
-	github.com/iden3/go-iden3-crypto v0.0.16 // indirect
 	github.com/improbable-eng/grpc-web v0.15.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jmhodges/levigo v1.0.0 // indirect
@@ -168,7 +167,6 @@ require (
 )
 
 require (
-	github.com/ahm23/go-merkletree-xxh v0.0.0-20260201203905-2b5218e57898
 	github.com/gofiber/fiber/v2 v2.52.10
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

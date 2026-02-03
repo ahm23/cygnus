@@ -53,7 +53,7 @@ func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*me
 
 	// create merkle tree
 	tree, err := merkletree.New(
-		&merkletree.Config{XXH128: true, DomainSeperation: true},
+		&merkletree.Config{XXH128: true, DomainSeperation: false},
 		leaves,
 	)
 	if err != nil {

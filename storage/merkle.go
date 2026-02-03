@@ -8,8 +8,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/wealdtech/go-merkletree/v2"
-	treeblake3 "github.com/wealdtech/go-merkletree/v2/blake3"
+	merkletree "github.com/ahm23/go-merkletree-xxh"
 	"github.com/zeebo/blake3"
 	"go.uber.org/zap"
 )
@@ -53,18 +52,17 @@ func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*me
 	fmt.Println("Leaves:", leaves)
 
 	// create merkle tree
-	tree, err := merkletree.NewUsing(
+	tree, err := merkletree.New(
+		&merkletree.Config{XXH128: true, DomainSeperation: true},
 		leaves,
-		treeblake3.New256(),
-		false,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create merkle tree: %w", err)
 	}
-	fmt.Println(tree.Nodes)
-	fmt.Println(tree.Sorted)
-	fmt.Println(tree.String())
-	merkleRoot := tree.Root()
+	fmt.Println(tree.Leaves)
+	fmt.Println(tree.Root)
+	fmt.Println(tree)
+	merkleRoot := tree.Root
 
 	sm.logger.Debug("Merkle tree created",
 		zap.String("root_hash", hex.EncodeToString(merkleRoot)),
@@ -77,7 +75,7 @@ func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*me
 
 func (sm *StorageManager) cacheMerkleTree(ctx context.Context, fileID string, tree *merkletree.MerkleTree, fileSize int) error {
 	treeData := map[string]interface{}{
-		"root_hash": hex.EncodeToString(tree.Root()),
+		"root_hash": hex.EncodeToString(tree.Root),
 		"file_size": fileSize,
 		"timestamp": time.Now().UTC(),
 	}

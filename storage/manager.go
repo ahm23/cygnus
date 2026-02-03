@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
+	merkletree "github.com/ahm23/go-merkletree-xxh"
 	"github.com/google/uuid"
-	"github.com/wealdtech/go-merkletree/v2"
 	"go.uber.org/zap"
 
 	storageTypes "nebulix/x/storage/types"
@@ -80,7 +80,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileId string, fileHea
 	if err != nil {
 		return false, fmt.Errorf("failed to build merkle tree: %w", err)
 	}
-	merkleRoot := tree.Root()
+	merkleRoot := tree.Root
 	fmt.Println("Merkle Root:", hex.EncodeToString(merkleRoot))
 
 	// generate proof of first chunk
@@ -128,12 +128,12 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileId string, fileHea
 		ChallengeId: "",
 		Fid:         fileId,
 		Data:        fileData[:1024],
-		Hashes:      merkleProof.Hashes,
-		Chunk:       merkleProof.Index,
+		Hashes:      merkleProof.Siblings,
+		Chunk:       merkleProof.Path,
 	}
 	fmt.Println("Fid:", fileId)
 	fmt.Println("Merkle:", hex.EncodeToString(merkleRoot))
-	fmt.Println("Chunk:", merkleProof.Index)
+	fmt.Println("Chunk:", merkleProof.Path)
 
 	_, err = sm.atlas.Wallet.BroadcastTxGrpc(0, false, msg)
 	if err != nil {
@@ -376,7 +376,7 @@ func (sm *StorageManager) generateProof(tree *merkletree.MerkleTree, index int64
 		// [TODO]: load tree from cache or create new tree from file
 	}
 
-	proof, err := tree.GenerateProof(tree.Data[index], 0)
+	proof, err := tree.Proof(tree.Leaves[index])
 	if err != nil {
 		return nil, err
 	}

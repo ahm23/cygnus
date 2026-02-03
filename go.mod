@@ -142,6 +142,7 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.51.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect
+	github.com/zeebo/xxh3 v1.1.0 // indirect
 	github.com/zondax/hid v0.9.2 // indirect
 	github.com/zondax/ledger-go v0.14.3 // indirect
 	go.etcd.io/bbolt v1.4.0-alpha.0.0.20240404170359-43604f3112c5 // indirect
@@ -167,6 +168,7 @@ require (
 )
 
 require (
+	github.com/ahm23/go-merkletree-xxh v0.0.0-20260201203905-2b5218e57898
 	github.com/gofiber/fiber/v2 v2.52.10
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

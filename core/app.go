@@ -186,5 +186,5 @@ func (app *App) genTestFile() {
 
 	tree, _ := app.storageManager.BuildMerkleTree(context.Background(), file)
 
-	fmt.Printf("Merkle Root: %x\n", tree.Root())
+	fmt.Printf("Merkle Root: %x\n", tree.Root)
 }

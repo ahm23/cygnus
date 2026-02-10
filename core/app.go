@@ -25,6 +25,8 @@ type App struct {
 	api            *api.API
 	atlas          *atlas.AtlasManager
 	storageManager *storage.StorageManager
+	eventListener  *atlas.EventListener
+	eventCancel    context.CancelFunc
 	// q            *queue.Queue
 	// prover       *proofs.Prover
 	// monitor    *monitoring.Monitor
@@ -62,27 +64,35 @@ func NewApp(home string) (*App, error) {
 	// log.Info().Str("provider_address", wc.Address).Send()
 	// log.Info().Str("home", home).Send()
 
-	atlas, err := atlas.NewAtlasManager(cfg, logger)
+	am, err := atlas.NewAtlasManager(cfg, logger)
 	if err != nil {
 		return nil, err
 	}
 
 	// Initialize storage manager
-	storageManager, err := storage.NewStorageManager(cfg, logger, atlas)
+	storageManager, err := storage.NewStorageManager(cfg, logger, am)
 	if err != nil {
 		log.Fatal().Err(err)
 	}
 
 	apiServer := api.NewAPI(&cfg.APICfg)
-	apiServer.SetupRoutes(cfg, logger, atlas, storageManager)
+	apiServer.SetupRoutes(cfg, logger, am, storageManager)
+
+	receiver := &chainEventReceiver{storage: storageManager}
+	eventListener, err := atlas.NewEventListener(cfg, logger, receiver)
+	if err != nil {
+		log.Warn().Err(err).Msg("Chain event listener not started (RPC may be unavailable)")
+		eventListener = nil
+	}
 
 	return &App{
 		cfg:            cfg,
 		log:            logger,
 		home:           home,
-		atlas:          atlas,
+		atlas:          am,
 		api:            apiServer,
 		storageManager: storageManager,
+		eventListener:  eventListener,
 	}, nil
 }
 
@@ -145,6 +155,16 @@ func (app *App) Start() error {
 	// Starting concurrent services
 	app.log.Info("Starting API Server...")
 	go app.api.Serve()
+
+	if app.eventListener != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		app.eventCancel = cancel
+		go func() {
+			if err := app.eventListener.Start(ctx); err != nil && ctx.Err() == nil {
+				app.log.Error("Chain event listener stopped with error", zap.Error(err))
+			}
+		}()
+	}
 	// go app.prover.Start()
 	// go app.strayManager.Start(app.fileSystem, app.q, myUrl, params.ChunkSize)
 
@@ -156,6 +176,13 @@ func (app *App) Start() error {
 
 	fmt.Println("Shutting cygnus down safely...")
 
+	if app.eventCancel != nil {
+		app.eventCancel()
+	}
+	if app.eventListener != nil {
+		app.eventListener.Stop()
+	}
+	_ = app.storageManager.Close()
 	_ = app.api.Close()
 	return nil
 }

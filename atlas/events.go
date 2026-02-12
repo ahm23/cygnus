@@ -33,8 +33,8 @@ const (
 
 	// Example endblocker event types / keys
 	// Common patterns: "proof.start_proof_round", "start_proof_window", "round.started", etc.
-	endblockProofRoundKey  = "start_proof_round" // or "proof.round_started", "round.id", etc.
-	endblockProofWindowKey = "start_proof_window"
+	endblockProofRoundKey  = "challenge_round_start" // or "proof.round_started", "round.id", etc.
+	endblockProofWindowKey = "challenge_window_start"
 )
 
 // ChainEventReceiver defines callbacks for relevant events
@@ -194,50 +194,20 @@ func (el *EventListener) handleBlockEvent(ctx context.Context, result ctypes.Res
 	}
 
 	// 2. Now look for your custom EndBlock events
-	// Pattern A: direct event type used as key
+
 	if _, hasRound := events[endblockProofRoundKey]; hasRound {
-		// e.g. start_proof_round.round=5 or just presence means start
 		round := getFirstOrEmpty(events, endblockProofRoundKey+".round")
-		if round == "" {
-			round = "started" // fallback if no round attribute
-		}
-		el.dispatchOrLog(ctx, "start_proof_round",
+		el.dispatchOrLog(ctx, "challenge_round_start",
 			fmt.Sprintf("height=%d round=%s", height, round),
 			el.receiver.OnStartProofRound(ctx, height, round))
 	}
 
 	if _, hasWindow := events[endblockProofWindowKey]; hasWindow {
 		window := getFirstOrEmpty(events, endblockProofWindowKey+".window")
-		if window == "" {
-			window = "started"
-		}
-		el.dispatchOrLog(ctx, "start_proof_window",
+		el.dispatchOrLog(ctx, "challenge_window_start",
 			fmt.Sprintf("height=%d window=%s", height, window),
 			el.receiver.OnStartProofWindow(ctx, height, window))
 	}
-
-	// Pattern B: more Cosmos-like → module.action or custom type
-	if actionVals, ok := events["module.action"]; ok {
-		for _, act := range actionVals {
-			switch act {
-			case "start_proof_round":
-				round := getFirstOrEmpty(events, "round") // or "round.id", "proof.round", etc.
-				el.dispatchOrLog(ctx, "start_proof_round (module.action)",
-					fmt.Sprintf("height=%d round=%s", height, round),
-					el.receiver.OnStartProofRound(ctx, height, round))
-
-			case "start_proof_window":
-				window := getFirstOrEmpty(events, "window") // or "window.id", etc.
-				el.dispatchOrLog(ctx, "start_proof_window (module.action)",
-					fmt.Sprintf("height=%d window=%s", height, window),
-					el.receiver.OnStartProofWindow(ctx, height, window))
-			}
-		}
-	}
-
-	// Pattern C: if your module emits typed events like "proof.round_started"
-	// add more cases like:
-	// if _, ok := events["proof.round_started"]; ok { ... }
 }
 
 // Helpers ─────────────────────────────────────────────────────────────────────

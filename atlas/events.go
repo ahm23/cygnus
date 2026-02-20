@@ -81,6 +81,7 @@ func NewEventListener(cfg *config.Config, logger *zap.Logger, receiver ChainEven
 
 // Start begins both subscriptions and processes events.
 func (el *EventListener) Start(ctx context.Context) error {
+	el.logger.Info("[EventListener] Starting event listener...")
 	if err := el.client.Start(); err != nil {
 		return fmt.Errorf("atlas events: start rpc client: %w", err)
 	}
@@ -173,6 +174,8 @@ func (el *EventListener) handleBlockEvent(ctx context.Context, result ctypes.Res
 	if events == nil {
 		return
 	}
+
+	el.logger.Info("[EventListener] New block event!")
 
 	// 1. Extract block height from the standard indexed key (safest way)
 	heightStrs, hasHeight := events["block.height"]

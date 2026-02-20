@@ -41,7 +41,7 @@ func NewApp(home string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	logger, err := zap.NewProduction()
+	logger, err := zap.NewDevelopment()
 
 	dataDir := os.ExpandEnv(cfg.DataDirectory)
 

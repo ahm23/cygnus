@@ -170,6 +170,9 @@ func (el *EventListener) handleTxEvent(ctx context.Context, result wstypes.Resul
 
 // ── Block (EndBlock) event handling ─────────────────────────────────────────
 func (el *EventListener) handleBlockEvent(ctx context.Context, result wstypes.ResultEvent) {
+	el.logger.Info("[EventListener] New block event!")
+	el.logger.Info(fmt.Sprint(result.Events))
+
 	block := result.Data.(ctypes.EventDataNewBlock).Block
 	events := result.Events
 	if events == nil {

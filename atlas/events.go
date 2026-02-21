@@ -191,7 +191,6 @@ func (el *EventListener) handleBlockEvent(ctx context.Context, result wstypes.Re
 
 	// 2. Now look for your custom EndBlock events
 	if _, hasRound := events[endblockProofRoundKey]; hasRound {
-		el.logger.Info(fmt.Sprint(events[endblockProofRoundKey]))
 		round := getFirstOrEmpty(events, endblockProofRoundKey+".round")
 		el.dispatchOrLog(ctx, "challenge_round_start",
 			fmt.Sprintf("height=%d round=%s", height, round),

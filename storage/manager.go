@@ -267,7 +267,7 @@ func (sm *StorageManager) VerifyFileIntegrity(ctx context.Context, fileID *strin
 
 	if _, err := sm.atlas.QueryClients.Storage.File(ctx, &storageTypes.QueryFileRequest{Fid: *fileID}); err != nil {
 		sm.logger.Warn("File integrity check failed for "+*fileID+". File does not exist on-chain.", zap.Error(err))
-	} else if err := sm.db.GetJSON(ctx, FileKey(*fileID), nil); err != nil {
+	} else if ok, err := sm.db.Has(ctx, FileKey(*fileID)); !ok || err != nil {
 		sm.logger.Warn("File integrity check failed for "+*fileID+". File does not exist in database.", zap.Error(err))
 	} else if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		sm.logger.Warn("File integrity check failed for "+*fileID+". File does not exist on disk.", zap.Error(err))

@@ -208,6 +208,55 @@ func (sm *StorageManager) DeleteFile(ctx context.Context, fileID string) error {
 	return nil
 }
 
+func (sm *StorageManager) ProveFile(ctx context.Context, fileID string, chunk int64) error {
+	filePath := filepath.Join(sm.config.DataDirectory, fileID)
+	// metadata, err := sm.getMetadata(ctx, fileID)
+	// if err != nil {
+	// 	return err
+	// }
+	// if !metadata.IsAvailable {
+	// 	return fmt.Errorf("file not available")
+	// }
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s: %w", fileID, err)
+	}
+	fileData, err := io.ReadAll(file)
+	if err != nil {
+		return fmt.Errorf("failed to read file %s: %w", fileID, err)
+	}
+	file.Close()
+
+	fmt.Println("Building MerkleTree....")
+	tree, err := sm.buildMerkleTree(ctx, fileData)
+	if err != nil {
+		return fmt.Errorf("failed to build merkle tree for %s: %w", fileID, err)
+	}
+
+	merkleProof, err := tree.Proof(int(chunk))
+	if err != nil {
+		return fmt.Errorf("failed to generate proof for %s: %w", fileID, err)
+	}
+
+	chunkDat, err := getFileSegment(filePath, chunk*types.ChunkSize, (chunk+1)*types.ChunkSize)
+
+	msg := &storageTypes.MsgProveFile{
+		Creator:     sm.atlas.Wallet.GetAddress(),
+		ChallengeId: "",
+		Fid:         fileID,
+		Data:        chunkDat,
+		Hashes:      merkleProof.Siblings,
+		Chunk:       merkleProof.Index,
+	}
+	fmt.Println("Fid:", fileID)
+	fmt.Println("Merkle:", hex.EncodeToString(tree.Root))
+	fmt.Println("Chunk:", merkleProof.Index)
+
+	_, err = sm.atlas.Wallet.BroadcastTxGrpc(0, false, msg)
+	return err
+}
+
 /*
 ListFiles returns a list of files. This is paginated.
 */

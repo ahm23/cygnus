@@ -208,7 +208,7 @@ func (sm *StorageManager) DeleteFile(ctx context.Context, fileID string) error {
 	return nil
 }
 
-func (sm *StorageManager) ProveFile(ctx context.Context, fileID string, chunk int64) error {
+func (sm *StorageManager) ProveFile(ctx context.Context, fileID string, challengeID string, chunk int64) error {
 	filePath := filepath.Join(sm.config.DataDirectory, fileID)
 	// metadata, err := sm.getMetadata(ctx, fileID)
 	// if err != nil {
@@ -243,7 +243,7 @@ func (sm *StorageManager) ProveFile(ctx context.Context, fileID string, chunk in
 
 	msg := &storageTypes.MsgProveFile{
 		Creator:     sm.atlas.Wallet.GetAddress(),
-		ChallengeId: "",
+		ChallengeId: challengeID,
 		Fid:         fileID,
 		Data:        chunkDat,
 		Hashes:      merkleProof.Siblings,

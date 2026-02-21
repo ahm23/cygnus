@@ -34,7 +34,7 @@ func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64
 	// [TODO]: implement endpoint swapping
 	fmt.Println(res.Challenges)
 	for _, challenge := range res.Challenges {
-		err := r.storage.ProveFile(ctx, challenge.FileId, int64(challenge.ChunkIndex))
+		err := r.storage.ProveFile(ctx, challenge.FileId, challenge.ChallengeId, int64(challenge.ChunkIndex))
 		fmt.Println("err:", err)
 	}
 

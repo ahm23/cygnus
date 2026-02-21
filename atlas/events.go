@@ -170,13 +170,14 @@ func (el *EventListener) handleTxEvent(ctx context.Context, result ctypes.Result
 
 // ── Block (EndBlock) event handling ─────────────────────────────────────────
 func (el *EventListener) handleBlockEvent(ctx context.Context, result ctypes.ResultEvent) {
+	el.logger.Info("[EventListener] New block event!")
+	el.logger.Info(fmt.Sprint(result.Data))
+	el.logger.Info(fmt.Sprint(result))
+
 	events := result.Events
 	if events == nil {
 		return
 	}
-
-	el.logger.Info("[EventListener] New block event!")
-	el.logger.Info(fmt.Sprint(events))
 
 	// 1. Extract block height from the standard indexed key (safest way)
 	heightStrs, hasHeight := events["block.height"]

@@ -33,8 +33,8 @@ const (
 
 	// Example endblocker event types / keys
 	// Common patterns: "proof.start_proof_round", "start_proof_window", "round.started", etc.
-	endblockProofRoundKey  = "challenge_round_start" // or "proof.round_started", "round.id", etc.
-	endblockProofWindowKey = "challenge_window_start"
+	endblockProofRoundKey  = "challenge_round_start.round" // or "proof.round_started", "round.id", etc.
+	endblockProofWindowKey = "challenge_window_start.window"
 )
 
 // ChainEventReceiver defines callbacks for relevant events
@@ -170,8 +170,8 @@ func (el *EventListener) handleTxEvent(ctx context.Context, result wstypes.Resul
 
 // ── Block (EndBlock) event handling ─────────────────────────────────────────
 func (el *EventListener) handleBlockEvent(ctx context.Context, result wstypes.ResultEvent) {
-	el.logger.Info("[EventListener] New block event!")
-	el.logger.Info(fmt.Sprint(result.Events))
+	// el.logger.Info("[EventListener] New block event!")
+	// el.logger.Info(fmt.Sprint(result.Events))
 
 	block := result.Data.(ctypes.EventDataNewBlock).Block
 	events := result.Events

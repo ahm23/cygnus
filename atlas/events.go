@@ -176,6 +176,7 @@ func (el *EventListener) handleBlockEvent(ctx context.Context, result ctypes.Res
 	}
 
 	el.logger.Info("[EventListener] New block event!")
+	el.logger.Info(fmt.Sprint(events))
 
 	// 1. Extract block height from the standard indexed key (safest way)
 	heightStrs, hasHeight := events["block.height"]

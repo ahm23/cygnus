@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/cometbft/cometbft/rpc/client/http"
-	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	wstypes "github.com/cometbft/cometbft/rpc/core/types"
+	ctypes "github.com/cometbft/cometbft/types"
 	"go.uber.org/zap"
 
 	"cygnus/config"
@@ -141,7 +141,7 @@ func (el *EventListener) Stop() {
 
 // ── Tx event handling ────────────────────────────────────────────────────────
 
-func (el *EventListener) handleTxEvent(ctx context.Context, result ctypes.ResultEvent) {
+func (el *EventListener) handleTxEvent(ctx context.Context, result wstypes.ResultEvent) {
 	events := result.Events
 	if events == nil {
 		return
@@ -169,29 +169,17 @@ func (el *EventListener) handleTxEvent(ctx context.Context, result ctypes.Result
 }
 
 // ── Block (EndBlock) event handling ─────────────────────────────────────────
-func (el *EventListener) handleBlockEvent(ctx context.Context, result ctypes.ResultEvent) {
-	el.logger.Info("[EventListener] New block event!")
-	el.logger.Info(fmt.Sprint(result.Data))
-	el.logger.Info(fmt.Sprint(result))
-
+func (el *EventListener) handleBlockEvent(ctx context.Context, result wstypes.ResultEvent) {
+	block := result.Data.(ctypes.EventDataNewBlock).Block
 	events := result.Events
 	if events == nil {
 		return
 	}
 
 	// 1. Extract block height from the standard indexed key (safest way)
-	heightStrs, hasHeight := events["block.height"]
-	if !hasHeight || len(heightStrs) == 0 {
-		el.logger.Warn("NewBlock event missing block.height")
-		return
-	}
-	height, err := strconv.ParseInt(heightStrs[0], 10, 64)
-	if err != nil {
-		el.logger.Warn("Invalid block.height value", zap.String("value", heightStrs[0]), zap.Error(err))
-		return
-	}
+	height := block.Height
 
-	// Optional: confirm it's really a NewBlock
+	// extra: confirm it's really a NewBlock
 	tmEventVals, hasTm := events["tm.event"]
 	if !hasTm || len(tmEventVals) == 0 || tmEventVals[0] != "NewBlock" {
 		el.logger.Warn("Unexpected tm.event in block subscription")
@@ -199,7 +187,6 @@ func (el *EventListener) handleBlockEvent(ctx context.Context, result ctypes.Res
 	}
 
 	// 2. Now look for your custom EndBlock events
-
 	if _, hasRound := events[endblockProofRoundKey]; hasRound {
 		round := getFirstOrEmpty(events, endblockProofRoundKey+".round")
 		el.dispatchOrLog(ctx, "challenge_round_start",

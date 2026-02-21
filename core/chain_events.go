@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	storageTypes "nebulix/x/storage/types"
 
@@ -31,8 +32,10 @@ func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64
 	res, _ := cl.Challenges(context.Background(), request)
 	// [TODO]: implement retry logic
 	// [TODO]: implement endpoint swapping
+	fmt.Println(res.Challenges)
 	for _, challenge := range res.Challenges {
-		r.storage.ProveFile(ctx, challenge.FileId, int64(challenge.ChunkIndex))
+		err := r.storage.ProveFile(ctx, challenge.FileId, int64(challenge.ChunkIndex))
+		fmt.Println("err:", err)
 	}
 
 	return nil

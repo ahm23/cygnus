@@ -11,35 +11,29 @@ import (
 
 func (a *API) SetupRoutes(cfg *config.Config, logger *zap.Logger, atlas *atlas.AtlasManager, storageManager *storage.StorageManager) {
 	handler := NewHandler(storageManager, logger, cfg)
-
 	middleware := Middleware{
-		&atlas.QueryClients,
+		AtlasQueryClients: &atlas.QueryClients,
+		StorageManager:    storageManager,
+		Config:            cfg,
 	}
 
-	// API group with auth middleware
 	api := a.srv.Group("/api/v1")
-	// api.Use(AuthMiddleware(cfg))
-	// api.Use(FileSizeLimitMiddleware(cfg.Storage.MaxUploadSize))
 
-	// File operations
+	api.Get("/health", handler.HealthCheck)
+	api.Get("/status", handler.GetStatus)
+	api.Get("/files", handler.ListFiles)
+	api.Get("/files/:id", handler.GetFile)
+	api.Get("/files/:id/download", handler.DownloadFile)
+	api.Delete("/files/:id", handler.DeleteFile)
+
 	api.Post("/upload",
 		middleware.ValidateSufficientStorage,
 		middleware.ValidateStagedFileExists,
 		handler.UploadFile)
-
-	// api.Get("/files", handler.ListFiles)
-	// api.Get("/files/:id", handler.GetFile)
-	// api.Get("/files/:id/download", handler.DownloadFile)
-	// api.Delete("/files/:id", handler.DeleteFile)
-	// api.Get("/files/stats", handler.GetFileStats)
-
-	// app.Get("/health", handler.HealthCheck)
-	// app.Get("/status", handler.GetStatus) // Public status endpoint
 }
 
-// SetupSwagger for API documentation (optional)
+// SetupSwagger for API documentation (optional).
 func SetupSwagger(app *fiber.App) {
-	// Add swagger UI if needed
 	app.Get("/docs", func(c *fiber.Ctx) error {
 		return c.SendString("API Documentation - Add Swagger UI here")
 	})

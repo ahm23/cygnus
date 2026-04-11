@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"go.uber.org/zap"
@@ -27,58 +28,40 @@ type App struct {
 	storageManager *storage.StorageManager
 	eventListener  *atlas.EventListener
 	eventCancel    context.CancelFunc
-	// q            *queue.Queue
-	// prover       *proofs.Prover
-	// monitor    *monitoring.Monitor
-	// fileSystem *file_system.FileSystem
 }
 
-// NewApp initializes and returns a new App instance using the provided home directory.
-// It sets up configuration, data directories, database, IPFS datastore and blockstore, API server, wallet, and file system.
-// Returns the initialized App or an error if any component fails to initialize.
 func NewApp(home string) (*App, error) {
 	cfg, err := config.Init(home)
 	if err != nil {
 		return nil, err
 	}
+
 	logger, err := zap.NewDevelopment()
-
-	dataDir := os.ExpandEnv(cfg.DataDirectory)
-
-	err = os.MkdirAll(dataDir, os.ModePerm)
 	if err != nil {
 		return nil, err
 	}
 
-	// Initialize PebbleDB for metadata
-	// storageDB, err := storage.NewPebbleStore(cfg.HomeDir)
-	// if err != nil {
-	// 	log.Fatal().Err(err)
-	// }
-	// defer storageDB.Close()
+	dataDir := os.ExpandEnv(cfg.DataDirectory)
+	if err := os.MkdirAll(dataDir, os.ModePerm); err != nil {
+		return nil, err
+	}
 
-	// wc, err := config.InitWallet(home)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// log.Info().Str("provider_address", wc.Address).Send()
-	// log.Info().Str("home", home).Send()
-
+	// === initialize managers
 	am, err := atlas.NewAtlasManager(cfg, logger)
 	if err != nil {
 		return nil, err
 	}
 
-	// Initialize storage manager
-	storageManager, err := storage.NewStorageManager(cfg, logger, am)
+	sm, err := storage.NewStorageManager(cfg, logger, am)
 	if err != nil {
-		log.Fatal().Err(err)
+		return nil, err
 	}
 
+	// === initialize api server & rpc socket listeners
 	apiServer := api.NewAPI(&cfg.APICfg)
-	apiServer.SetupRoutes(cfg, logger, am, storageManager)
+	apiServer.SetupRoutes(cfg, logger, am, sm)
 
-	receiver := &chainEventReceiver{atlas: am, storage: storageManager}
+	receiver := &chainEventReceiver{atlas: am, storage: sm, logger: logger}
 	eventListener, err := atlas.NewEventListener(cfg, logger, receiver)
 	if err != nil {
 		log.Warn().Err(err).Msg("Chain event listener not started (RPC may be unavailable)")
@@ -91,7 +74,7 @@ func NewApp(home string) (*App, error) {
 		home:           home,
 		atlas:          am,
 		api:            apiServer,
-		storageManager: storageManager,
+		storageManager: sm,
 		eventListener:  eventListener,
 	}, nil
 }
@@ -100,8 +83,6 @@ func (app *App) Start() error {
 	log.Info().Msg("Starting Cygnus...")
 	log.Debug().Object("config", app.cfg).Msg("cygnus config")
 
-	app.genTestFile()
-
 	if err := app.atlas.ConnectGRPC(); err != nil {
 		return err
 	}
@@ -109,51 +90,11 @@ func (app *App) Start() error {
 		return err
 	}
 
-	queryProviderParams := &storageTypes.QueryProviderRequest{
-		Address: app.atlas.Wallet.GetAddress(),
-	}
-	cl := app.atlas.QueryClients.Storage
-
-	res, err := cl.Provider(context.Background(), queryProviderParams)
-	if err != nil || res.Provider == nil {
-		log.Info().Err(err).Msg("Provider does not exist on network or is not connected...")
-		err := initProviderOnChain(app.atlas.Wallet, app.cfg.Ip, app.cfg.TotalSpace)
-		if err != nil {
-			log.Error().Err(err)
-			return err
-		}
-	} else {
-		log.Info().Str("res", res.String()).Send()
-		log.Info().
-			Str("address", res.Provider.Address).
-			Str("hostname", res.Provider.Hostname).
-			Int64("created_at", res.Provider.CreatedAt).
-			Int64("space_available", res.Provider.SpaceAvailable).
-			Int64("space_used", res.Provider.SpaceUsed).
-			Msg("provider query result")
-
-		// claimers = res.Provider.AuthClaimers
-
-		// totalSpace, err := strconv.ParseInt(res.Provider.Totalspace, 10, 64)
-		// if err != nil {
-		// 	return err
-		// }
-		// if totalSpace != cfg.TotalSpace {
-		// 	err := updateSpace(app.wallet, cfg.TotalSpace)
-		// 	if err != nil {
-		// 		return err
-		// 	}
-		// }
-		// if res.Provider.Ip != cfg.Ip {
-		// 	err := updateIp(app.wallet, cfg.Ip)
-		// 	if err != nil {
-		// 		return err
-		// 	}
-		// }
+	if err := app.ensureProviderRegistration(context.Background()); err != nil {
+		return err
 	}
 
-	// Starting concurrent services
-	app.log.Info("Starting API Server...")
+	app.log.Info("Starting API Server...", zap.Int64("port", app.cfg.APICfg.Port))
 	go app.api.Serve()
 
 	if app.eventListener != nil {
@@ -165,14 +106,12 @@ func (app *App) Start() error {
 			}
 		}()
 	}
-	// go app.prover.Start()
-	// go app.strayManager.Start(app.fileSystem, app.q, myUrl, params.ChunkSize)
 
 	done := make(chan os.Signal, 1)
 	defer signal.Stop(done)
 
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
-	<-done // Will block here until user hits ctrl+c
+	<-done
 
 	fmt.Println("Shutting cygnus down safely...")
 
@@ -184,6 +123,46 @@ func (app *App) Start() error {
 	}
 	_ = app.storageManager.Close()
 	_ = app.api.Close()
+	_ = app.atlas.Close()
+	return nil
+}
+
+func (app *App) ensureProviderRegistration(ctx context.Context) error {
+	queryProviderParams := &storageTypes.QueryProviderRequest{
+		Address: app.atlas.Wallet.GetAddress(),
+	}
+	cl := app.atlas.QueryClients.Storage
+
+	res, err := cl.Provider(ctx, queryProviderParams)
+	if err != nil || res.Provider == nil {
+		log.Info().Err(err).Msg("Provider does not exist on network or is not connected...")
+		if err := initProviderOnChain(app.atlas.Wallet, app.cfg.Ip, app.cfg.TotalSpace); err != nil {
+			log.Error().Err(err)
+			return err
+		}
+		app.storageManager.RecordChainSync(time.Now().UTC())
+		return nil
+	}
+
+	app.storageManager.RecordChainSync(time.Now().UTC())
+	app.log.Info("Provider query result",
+		zap.String("address", res.Provider.Address),
+		zap.String("hostname", res.Provider.Hostname),
+		zap.Int64("created_at", res.Provider.CreatedAt),
+		zap.Int64("space_available", res.Provider.SpaceAvailable),
+		zap.Int64("space_used", res.Provider.SpaceUsed))
+
+	if res.Provider.Hostname != app.cfg.Ip {
+		app.log.Warn("Provider hostname differs from local config",
+			zap.String("chain_hostname", res.Provider.Hostname),
+			zap.String("configured_hostname", app.cfg.Ip))
+	}
+	if res.Provider.SpaceAvailable > app.cfg.TotalSpace {
+		app.log.Warn("Configured total space is lower than on-chain available space",
+			zap.Int64("chain_space_available", res.Provider.SpaceAvailable),
+			zap.Int64("configured_total_space", app.cfg.TotalSpace))
+	}
+
 	return nil
 }
 
@@ -198,20 +177,10 @@ func initProviderOnChain(wallet *atlas.AtlasWallet, ip string, totalSpace int64)
 	if err != nil {
 		return fmt.Errorf("failed to broadcast transaction: %w", err)
 	}
-
 	if resp.Code != 0 {
 		return fmt.Errorf("transaction failed: %s", resp.RawLog)
 	}
 
 	fmt.Printf("Provider registered! Tx hash: %s\n", resp.TxHash)
 	return nil
-}
-
-// [TODO]: rmeove this when doen with CLI tesdting
-func (app *App) genTestFile() {
-	file, _ := os.ReadFile("go.mod")
-
-	tree, _ := app.storageManager.BuildMerkleTree(context.Background(), file)
-
-	fmt.Printf("Merkle Root: %x\n", tree.Root)
 }

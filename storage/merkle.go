@@ -1,11 +1,13 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"cygnus/types"
 	"encoding/hex"
 	"fmt"
-	"math"
+	"io"
+	"os"
 	"time"
 
 	merkletree "github.com/ahm23/go-merkletree-xxh"
@@ -13,80 +15,97 @@ import (
 	"go.uber.org/zap"
 )
 
-// buildMerkleTree creates a Merkle tree from file chunks
-func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*merkletree.MerkleTree, error) {
-	sm.logger.Info("Building Merkle tree",
-		zap.Int64("total_size", int64(len(data))),
-		zap.Int64("chunk_size", types.ChunkSize))
-
-	// Calculate number of chunks
-	totalChunks := int(math.Ceil(float64(len(data)) / float64(types.ChunkSize)))
-
-	// prepare merkle leaves
-	var leaves [][]byte
+func hashChunk(chunk []byte) []byte {
 	hasher := blake3.New()
+	_, _ = hasher.Write(chunk)
+	return hasher.Sum(nil)
+}
 
-	for i := 0; i < totalChunks; i++ {
-		start := i * int(types.ChunkSize)
-		end := start + int(types.ChunkSize)
-		if end > len(data) {
-			end = len(data)
-		}
-		chunk := data[start:end]
-
-		// compute chunk hash for leaf
-		hasher.Reset()
-		hasher.Write(chunk)
-		chunkHash := hasher.Sum(nil)
-
-		fmt.Println("leaf:", hex.EncodeToString(chunkHash))
-		fmt.Println("len:", len(chunk))
-		// fmt.Println(chunk)
-		leaves = append(leaves, chunkHash)
+func buildMerkleTreeFromLeaves(leaves [][]byte) (*merkletree.MerkleTree, error) {
+	if len(leaves) == 0 {
+		return nil, fmt.Errorf("cannot build merkle tree with no leaves")
 	}
 
-	if len(leaves)%2 == 1 {
-		leaves = append(leaves, leaves[len(leaves)-1])
+	treeLeaves := make([][]byte, len(leaves))
+	for i, leaf := range leaves {
+		treeLeaves[i] = append([]byte(nil), leaf...)
 	}
 
-	fmt.Println("Leaves:", leaves)
+	if len(treeLeaves)%2 == 1 {
+		treeLeaves = append(treeLeaves, append([]byte(nil), treeLeaves[len(treeLeaves)-1]...))
+	}
 
-	// create merkle tree
 	tree, err := merkletree.New(
 		&merkletree.Config{XXH128: true, DomainSeperation: false},
-		leaves,
+		treeLeaves,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create merkle tree: %w", err)
 	}
-	fmt.Println(tree.Leaves)
-	fmt.Println(tree.Root)
-	fmt.Println(tree)
-	merkleRoot := tree.Root
-
-	sm.logger.Debug("Merkle tree created",
-		zap.String("root_hash", hex.EncodeToString(merkleRoot)),
-		zap.Int("total_chunks", totalChunks))
 
 	return tree, nil
 }
 
-//		TreeDepth:   int(math.Ceil(math.Log2(float64(totalChunks)))),
+func (sm *StorageManager) buildMerkleTreeFromReader(ctx context.Context, reader io.Reader) (*merkletree.MerkleTree, int, error) {
+	sm.logger.Info("Building Merkle tree from stream", zap.Int64("chunk_size", types.ChunkSize))
 
-func (sm *StorageManager) cacheMerkleTree(ctx context.Context, fileID string, tree *merkletree.MerkleTree, fileSize int) error {
-	treeData := map[string]interface{}{
-		"root_hash": hex.EncodeToString(tree.Root),
-		"file_size": fileSize,
-		"timestamp": time.Now().UTC(),
+	buf := make([]byte, types.ChunkSize)
+	var leaves [][]byte
+
+	for {
+		n, readErr := io.ReadFull(reader, buf)
+		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
+			return nil, 0, fmt.Errorf("failed to read merkle input: %w", readErr)
+		}
+		if n > 0 {
+			leaves = append(leaves, hashChunk(buf[:n]))
+		}
+		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+			break
+		}
 	}
 
-	// [TODO]: cache leaves for reconstruction,
-	// nodes instead maybe? idk.. performance impact to be analyzed
+	tree, err := buildMerkleTreeFromLeaves(leaves)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	sm.logger.Debug("Merkle tree created",
+		zap.String("root_hash", hex.EncodeToString(tree.Root)),
+		zap.Int("total_chunks", len(leaves)))
+
+	return tree, len(leaves), nil
+}
+
+// buildMerkleTree creates a Merkle tree from file chunks.
+func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*merkletree.MerkleTree, error) {
+	tree, _, err := sm.buildMerkleTreeFromReader(ctx, bytes.NewReader(data))
+	return tree, err
+}
+
+func (sm *StorageManager) buildMerkleTreeFromFile(ctx context.Context, filePath string) (*merkletree.MerkleTree, int, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to open file for merkle build: %w", err)
+	}
+	defer file.Close()
+
+	return sm.buildMerkleTreeFromReader(ctx, file)
+}
+
+func (sm *StorageManager) cacheMerkleTree(ctx context.Context, fileID string, tree *merkletree.MerkleTree, fileSize int64, chunks int) error {
+	treeData := map[string]interface{}{
+		"root_hash":   hex.EncodeToString(tree.Root),
+		"file_size":   fileSize,
+		"chunk_count": chunks,
+		"timestamp":   time.Now().UTC(),
+	}
+
 	key := MerkleKey(fileID)
 	return sm.db.SetHash(ctx, key, treeData)
 }
 
-// [TODO]: remove this when done with CLI tests
+// BuildMerkleTree is kept for local verification and tests.
 func (sm *StorageManager) BuildMerkleTree(ctx context.Context, data []byte) (*merkletree.MerkleTree, error) {
 	return sm.buildMerkleTree(ctx, data)
 }

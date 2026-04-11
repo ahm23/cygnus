@@ -20,22 +20,16 @@ type API struct {
 
 // NewAPI creates a new API instance using the provided API configuration.
 func NewAPI(cfg *config.APIConfig) *API {
-	// [TODO]: alow cors
-	// Create Fiber app
 	srv := fiber.New(fiber.Config{
 		AppName:                      "Cygnus DePIN Storage Provider",
 		ReadTimeout:                  30 * time.Minute,
 		WriteTimeout:                 30 * time.Minute,
-		IdleTimeout:                  30 * time.Minute, // Keep connections alive
+		IdleTimeout:                  30 * time.Minute,
 		DisablePreParseMultipartForm: false,
-		BodyLimit:                    100 * 1024 * 1024,
+		BodyLimit:                    int(cfg.MaxUploadSize),
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
-			// logger.Error("HTTP error",
-			// 	zap.String("path", c.Path()),
-			// 	zap.String("method", c.Method()),
-			// 	zap.Error(err))
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "Internal server error",
+				"error": err.Error(),
 			})
 		},
 	})
@@ -59,14 +53,10 @@ func (a *API) Close() error {
 	return a.srv.ShutdownWithContext(shutdownCtx)
 }
 
-// p *proofs.Prover, wallet *wallet.Wallet, chunkSize int64, myIp string
 func (a *API) Serve() {
-	// defer log.Info().Msg("API module stopped")
-	err := a.srv.Listen(":3333")
-	if err != nil {
-		if !errors.Is(err, http.ErrServerClosed) {
-			fmt.Println("ERROR STARTING SERVER")
-			return
-		}
+	addr := fmt.Sprintf(":%d", a.port)
+	err := a.srv.Listen(addr)
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		fmt.Println("ERROR STARTING SERVER:", err)
 	}
 }

@@ -36,7 +36,7 @@ func buildMerkleTreeFromLeaves(leaves [][]byte) (*merkletree.MerkleTree, error) 
 	}
 
 	tree, err := merkletree.New(
-		&merkletree.Config{XXH128: true, DomainSeperation: false},
+		&merkletree.Config{XXH128: true},
 		treeLeaves,
 	)
 	if err != nil {
@@ -70,7 +70,7 @@ func (sm *StorageManager) buildMerkleTreeFromReader(ctx context.Context, reader 
 		return nil, 0, err
 	}
 
-	sm.logger.Debug("Merkle tree created",
+	sm.logger.Info("Merkle tree created",
 		zap.String("root_hash", hex.EncodeToString(tree.Root)),
 		zap.Int("total_chunks", len(leaves)))
 

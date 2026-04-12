@@ -140,7 +140,7 @@ func (sm *StorageManager) recordProofActivity(at time.Time) {
 	sm.statusMu.Unlock()
 }
 
-func (sm *StorageManager) submitProof(ctx context.Context, fileID, challengeID string, proof *merkletree.Proof, chunkData []byte) error {
+func (sm *StorageManager) submitProof(ctx context.Context, fileID, challengeID string, proof *merkletree.Proof, chunkIndex uint64, chunkData []byte) error {
 	if sm.atlas == nil || sm.atlas.Wallet == nil {
 		return fmt.Errorf("wallet not connected")
 	}
@@ -151,7 +151,8 @@ func (sm *StorageManager) submitProof(ctx context.Context, fileID, challengeID s
 		Fid:         fileID,
 		Data:        chunkData,
 		Hashes:      proof.Siblings,
-		Chunk:       proof.Index,
+		Path:        proof.PathBits,
+		Chunk:       chunkIndex,
 	}
 
 	if _, err := sm.atlas.Wallet.BroadcastTxGrpc(0, true, msg); err != nil {
@@ -240,7 +241,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 		return nil, fmt.Errorf("failed to generate initial proof: %w", err)
 	}
 
-	if err := sm.submitProof(ctx, fileID, "", proof, ingest.FirstChunk); err != nil {
+	if err := sm.submitProof(ctx, fileID, "", proof, 0, ingest.FirstChunk); err != nil {
 		_ = sm.DeleteFile(ctx, fileID)
 		return nil, fmt.Errorf("failed to post initial file proof: %w", err)
 	}
@@ -321,14 +322,14 @@ func (sm *StorageManager) ProveFile(ctx context.Context, fileID string, challeng
 		return fmt.Errorf("failed to generate proof for %s: %w", fileID, err)
 	}
 
-	fmt.Println("Generated Proof:", proof.Index, proof.Siblings)
+	fmt.Println("Generated Proof:", chunk, proof.PathBits, proof.Siblings)
 
 	chunkData, err := getFileSegment(filePath, chunk*types.ChunkSize, (chunk+1)*types.ChunkSize)
 	if err != nil {
 		return fmt.Errorf("failed to read chunk data for %s: %w", fileID, err)
 	}
 
-	if err := sm.submitProof(ctx, fileID, challengeID, proof, chunkData); err != nil {
+	if err := sm.submitProof(ctx, fileID, challengeID, proof, uint64(chunk), chunkData); err != nil {
 		return err
 	}
 

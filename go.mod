@@ -3,7 +3,7 @@ module cygnus
 go 1.24.0
 
 require (
-	github.com/ahm23/go-merkletree-xxh v0.1.0
+	github.com/ahm23/go-merkletree-xxh v0.1.1
 	github.com/cockroachdb/pebble v1.1.5
 	github.com/cometbft/cometbft v0.38.17
 	github.com/cosmos/cosmos-sdk v0.53.4

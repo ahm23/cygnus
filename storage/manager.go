@@ -201,7 +201,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 		return nil, err
 	}
 	sm.logger.Info("Merkle tree created", zap.String("root_hash", hex.EncodeToString(tree.Root)))
-	fmt.Println(tree.Leaves)
+	fmt.Println(tree)
 
 	if err := os.Rename(tempPath, filePath); err != nil {
 		_ = os.Remove(tempPath)

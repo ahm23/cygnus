@@ -321,6 +321,8 @@ func (sm *StorageManager) ProveFile(ctx context.Context, fileID string, challeng
 		return fmt.Errorf("failed to generate proof for %s: %w", fileID, err)
 	}
 
+	fmt.Println("Generated Proof:", proof.Index, proof.Siblings)
+
 	chunkData, err := getFileSegment(filePath, chunk*types.ChunkSize, (chunk+1)*types.ChunkSize)
 	if err != nil {
 		return fmt.Errorf("failed to read chunk data for %s: %w", fileID, err)

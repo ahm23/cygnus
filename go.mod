@@ -3,11 +3,11 @@ module cygnus
 go 1.24.0
 
 require (
-	github.com/ahm23/go-merkletree-xxh v0.0.3
+	github.com/ahm23/go-merkletree-xxh v0.1.0
 	github.com/cockroachdb/pebble v1.1.5
+	github.com/cometbft/cometbft v0.38.17
 	github.com/cosmos/cosmos-sdk v0.53.4
 	github.com/cosmos/go-bip39 v1.0.0
-	github.com/google/uuid v1.6.0
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/cobra v1.9.1
 	github.com/zeebo/blake3 v0.2.4
@@ -46,7 +46,6 @@ require (
 	github.com/cockroachdb/logtags v0.0.0-20241215232642-bb51bb14a506 // indirect
 	github.com/cockroachdb/redact v1.1.6 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 // indirect
-	github.com/cometbft/cometbft v0.38.17 // indirect
 	github.com/cometbft/cometbft-db v0.14.1 // indirect
 	github.com/cosmos/btcutil v1.0.5 // indirect
 	github.com/cosmos/cosmos-db v1.1.1 // indirect
@@ -83,6 +82,7 @@ require (
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/flatbuffers v1.12.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/handlers v1.5.2 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect

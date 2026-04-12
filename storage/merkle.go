@@ -31,9 +31,9 @@ func buildMerkleTreeFromLeaves(leaves [][]byte) (*merkletree.MerkleTree, error) 
 		treeLeaves[i] = append([]byte(nil), leaf...)
 	}
 
-	if len(treeLeaves)%2 == 1 {
-		treeLeaves = append(treeLeaves, append([]byte(nil), treeLeaves[len(treeLeaves)-1]...))
-	}
+	// if len(treeLeaves)%2 == 1 {
+	// 	treeLeaves = append(treeLeaves, append([]byte(nil), treeLeaves[len(treeLeaves)-1]...))
+	// }
 
 	tree, err := merkletree.New(
 		&merkletree.Config{XXH128: true},

@@ -23,9 +23,8 @@ func (a *API) SetupRoutes(cfg *config.Config, logger *zap.Logger, atlas *atlas.A
 	api.Get("/status", handler.GetStatus)
 	api.Get("/files", handler.ListFiles)
 	api.Get("/files/:id", handler.GetFile)
-	api.Get("/files/:id/download", handler.DownloadFile)
-	api.Delete("/files/:id", handler.DeleteFile)
 
+	api.Get("/download/:id", handler.DownloadFile)
 	api.Post("/upload",
 		middleware.ValidateSufficientStorage,
 		middleware.ValidateStagedFileExists,

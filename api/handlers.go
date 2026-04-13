@@ -110,16 +110,6 @@ func (h *Handler) DownloadFile(c *fiber.Ctx) error {
 	return c.SendStream(file, int(metadata.Size))
 }
 
-func (h *Handler) DeleteFile(c *fiber.Ctx) error {
-	fileID := c.Params("id")
-	if err := h.storageManager.DeleteFile(c.Context(), fileID); err != nil {
-		h.logger.Error("Failed to delete file", zap.String("file_id", fileID), zap.Error(err))
-		return respondError(c, fiber.StatusInternalServerError, err.Error())
-	}
-
-	return respondSuccess(c, fiber.Map{"fid": fileID}, "file deleted successfully")
-}
-
 func (h *Handler) HealthCheck(c *fiber.Ctx) error {
 	return respondSuccess(c, fiber.Map{"status": "ok"}, "provider is healthy")
 }

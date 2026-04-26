@@ -19,7 +19,7 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
 	// Import from your local blockchain
-	"nebulix/app"
+	"atlas/app"
 
 	"cygnus/config"
 	"cygnus/types"

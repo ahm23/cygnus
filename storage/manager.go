@@ -21,7 +21,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
-	storageTypes "nebulix/x/storage/types"
+	storageTypes "atlas/x/storage/types"
 )
 
 type StorageManager struct {

@@ -9,7 +9,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client"
 	"go.uber.org/zap"
 
-	storagetypes "nebulix/x/storage/types"
+	storagetypes "atlas/x/storage/types"
 
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
@@ -17,7 +17,7 @@ import (
 	"google.golang.org/grpc"
 
 	// Import from your local blockchain
-	"nebulix/app"
+	"atlas/app"
 
 	"cygnus/config"
 	"cygnus/types"

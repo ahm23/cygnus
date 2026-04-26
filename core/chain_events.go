@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	storageTypes "nebulix/x/storage/types"
+	storageTypes "atlas/x/storage/types"
 
 	"cygnus/atlas"
 	"cygnus/storage"

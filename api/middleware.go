@@ -3,7 +3,7 @@ package api
 import (
 	"cygnus/types"
 	"fmt"
-	storagetypes "nebulix/x/storage/types"
+	storagetypes "atlas/x/storage/types"
 
 	"github.com/gofiber/fiber/v2"
 )

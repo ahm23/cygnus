@@ -15,7 +15,7 @@ import (
 	"cygnus/config"
 	"cygnus/storage"
 
-	storageTypes "nebulix/x/storage/types"
+	storageTypes "atlas/x/storage/types"
 )
 
 type App struct {

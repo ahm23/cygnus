@@ -31,9 +31,7 @@ func buildMerkleTreeFromLeaves(leaves [][]byte) (*merkletree.MerkleTree, error) 
 		treeLeaves[i] = append([]byte(nil), leaf...)
 	}
 
-	// if len(treeLeaves)%2 == 1 {
-	// 	treeLeaves = append(treeLeaves, append([]byte(nil), treeLeaves[len(treeLeaves)-1]...))
-	// }
+	// fmt.Println("Leaves:", leaves)
 
 	tree, err := merkletree.New(
 		&merkletree.Config{XXH128: true},
@@ -42,6 +40,9 @@ func buildMerkleTreeFromLeaves(leaves [][]byte) (*merkletree.MerkleTree, error) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create merkle tree: %w", err)
 	}
+	// fmt.Println(tree.Leaves)
+	// fmt.Println(tree.Root)
+	// fmt.Println(tree)
 
 	return tree, nil
 }

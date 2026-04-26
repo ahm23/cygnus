@@ -19,7 +19,7 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
 	// Import from your local blockchain
-	"nebulix/app"
+	"atlas/app"
 
 	"cygnus/config"
 	"cygnus/types"
@@ -136,8 +136,8 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to build tx: %w", err)
 	}
-	pk, _ := txb.GetTx().GetPubKeys()
-	fmt.Println("\nTX:\n", pk)
+	// pk, _ := txb.GetTx().GetPubKeys()
+	// fmt.Println("\nTX:\n", pk)
 
 	// Before signing, print all signing data
 	fmt.Println("=== Signing Debug ===")

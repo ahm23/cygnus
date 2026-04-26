@@ -140,8 +140,9 @@ func (el *EventListener) Stop() {
 }
 
 // ── Tx event handling ────────────────────────────────────────────────────────
-
 func (el *EventListener) handleTxEvent(ctx context.Context, result wstypes.ResultEvent) {
+	el.logger.Warn(fmt.Sprint(result) + "\n\n")
+	el.logger.Warn(fmt.Sprint(result.Events) + "\n\n")
 	events := result.Events
 	if events == nil {
 		return
@@ -207,11 +208,7 @@ func (el *EventListener) handleBlockEvent(ctx context.Context, result wstypes.Re
 
 // Helpers ─────────────────────────────────────────────────────────────────────
 func getFileID(events map[string][]string) string {
-	vals := events[attrFileID]
-	if len(vals) > 0 {
-		return vals[0]
-	}
-	vals = events["message.file_id"]
+	vals := events[actionDeleteFile+"."+attrFileID]
 	if len(vals) > 0 {
 		return vals[0]
 	}

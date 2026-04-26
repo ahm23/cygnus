@@ -20,7 +20,7 @@ import (
 	merkletree "github.com/ahm23/go-merkletree-xxh"
 	"go.uber.org/zap"
 
-	storageTypes "nebulix/x/storage/types"
+	storageTypes "atlas/x/storage/types"
 )
 
 type StorageManager struct {

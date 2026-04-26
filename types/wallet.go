@@ -1,7 +1,7 @@
 package types
 
 import (
-	storagetypes "nebulix/x/storage/types"
+	storagetypes "atlas/x/storage/types"
 
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"

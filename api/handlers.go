@@ -2,6 +2,8 @@ package api
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strconv"
 
 	"cygnus/config"
@@ -106,10 +108,35 @@ func (h *Handler) DownloadFile(c *fiber.Ctx) error {
 	}
 	defer file.Close()
 
+	// Debug: Just peek at first few bytes without consuming the stream
+	peekBuf := make([]byte, 10)
+	n, err := file.Read(peekBuf)
+	if err != nil && err != io.EOF {
+		return respondError(c, fiber.StatusInternalServerError, "Failed to peek at file")
+	}
+	fmt.Printf("Peeked %d bytes: %x...\n", n, peekBuf[:n])
+
+	// Seek back to beginning
+	if seeker, ok := file.(io.Seeker); ok {
+		_, err = seeker.Seek(0, 0)
+		if err != nil {
+			return respondError(c, fiber.StatusInternalServerError, "Failed to seek file")
+		}
+	}
+
+	// Verify position
+	if f, ok := file.(*os.File); ok {
+		pos, _ := f.Seek(0, io.SeekCurrent)
+		fmt.Printf("File position after seek: %d\n", pos)
+	}
+
 	c.Set(fiber.HeaderContentDisposition, "attachment; filename=\""+metadata.FileName+"\"")
 	c.Set(fiber.HeaderContentType, fiber.MIMEOctetStream)
-	fmt.Println("DOWNLOAD SIZE:", metadata.Size)
-	return c.SendStream(file, int(metadata.Size))
+
+	fmt.Printf("Starting stream of %d bytes...\n", metadata.Size)
+	err = c.SendStream(file, int(metadata.Size))
+	fmt.Printf("SendStream completed with error: %v\n", err)
+	return err
 }
 
 func (h *Handler) HealthCheck(c *fiber.Ctx) error {

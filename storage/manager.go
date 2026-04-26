@@ -214,6 +214,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 		owner = sm.atlas.Wallet.GetAddress()
 	}
 
+	fmt.Println("INGEST SIZE:", ingest.Size)
 	metadata := &types.FileMetadata{
 		FID:         fileID,
 		FileName:    fileHeader.Filename,

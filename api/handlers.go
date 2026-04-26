@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"strconv"
 
 	"cygnus/config"
@@ -107,6 +108,7 @@ func (h *Handler) DownloadFile(c *fiber.Ctx) error {
 
 	c.Set(fiber.HeaderContentDisposition, "attachment; filename=\""+metadata.FileName+"\"")
 	c.Set(fiber.HeaderContentType, fiber.MIMEOctetStream)
+	fmt.Println("DOWNLOAD SIZE:", metadata.Size)
 	return c.SendStream(file, int(metadata.Size))
 }
 

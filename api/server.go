@@ -26,7 +26,7 @@ func NewAPI(cfg *config.APIConfig) *API {
 		WriteTimeout:                 30 * time.Minute,
 		IdleTimeout:                  30 * time.Minute,
 		DisablePreParseMultipartForm: false,
-		BodyLimit:                    int(cfg.MaxUploadSize),
+		BodyLimit:                    4 * 1024 * 1024 * 1024,
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			fmt.Println("ERROR:", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{

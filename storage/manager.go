@@ -202,7 +202,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 		return nil, err
 	}
 	sm.logger.Info("Merkle tree created", zap.String("root_hash", hex.EncodeToString(tree.Root)))
-	fmt.Println(tree)
+	// fmt.Println(tree)
 
 	if err := os.Rename(tempPath, filePath); err != nil {
 		_ = os.Remove(tempPath)
@@ -323,7 +323,7 @@ func (sm *StorageManager) ProveFile(ctx context.Context, fileID string, challeng
 		return fmt.Errorf("failed to generate proof for %s: %w", fileID, err)
 	}
 
-	fmt.Println("Generated Proof:", chunk, proof.PathBits, proof.Siblings)
+	// fmt.Println("Generated Proof:", chunk, proof.PathBits, proof.Siblings)
 
 	chunkData, err := getFileSegment(filePath, chunk*types.ChunkSize, (chunk+1)*types.ChunkSize)
 	if err != nil {

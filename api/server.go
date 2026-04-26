@@ -28,6 +28,7 @@ func NewAPI(cfg *config.APIConfig) *API {
 		DisablePreParseMultipartForm: false,
 		BodyLimit:                    int(cfg.MaxUploadSize),
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
+			fmt.Println("ERROR:", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": err.Error(),
 			})

@@ -99,15 +99,21 @@ func (h *Handler) GetFile(c *fiber.Ctx) error {
 
 func (h *Handler) DownloadFile(c *fiber.Ctx) error {
 	fileID := c.Params("id")
-	metadata, file, err := h.storageManager.GetFile(c.Context(), fileID)
+	metadata, err := h.storageManager.GetFileMetadata(c.Context(), fileID)
 	if err != nil {
 		return respondError(c, fiber.StatusNotFound, err.Error())
 	}
-	defer file.Close()
+	filePath, err := h.storageManager.GetFilePath(fileID)
+	if err != nil {
+		return respondError(c, fiber.StatusNotFound, err.Error())
+	}
+
+	if err != nil {
+		return respondError(c, fiber.StatusInternalServerError, err.Error())
+	}
 
 	c.Set(fiber.HeaderContentDisposition, "attachment; filename=\""+metadata.FileName+"\"")
-	c.Set(fiber.HeaderContentType, fiber.MIMEOctetStream)
-	return c.SendStream(file, int(metadata.Size))
+	return c.SendFile(filePath)
 }
 
 func (h *Handler) HealthCheck(c *fiber.Ctx) error {

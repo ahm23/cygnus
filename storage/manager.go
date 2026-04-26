@@ -70,7 +70,7 @@ func validateFileID(fileID string) error {
 	return nil
 }
 
-func (sm *StorageManager) filePath(fileID string) (string, error) {
+func (sm *StorageManager) GetFilePath(fileID string) (string, error) {
 	if err := validateFileID(fileID); err != nil {
 		return "", err
 	}
@@ -175,7 +175,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 		return nil, fmt.Errorf("insufficient provider capacity")
 	}
 
-	filePath, err := sm.filePath(fileID)
+	filePath, err := sm.GetFilePath(fileID)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +258,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 
 // GetFile gets the metadata and a readonly file handle for the specified file.
 func (sm *StorageManager) GetFile(ctx context.Context, fileID string) (*types.FileMetadata, io.ReadCloser, error) {
-	metadata, err := sm.getMetadata(ctx, fileID)
+	metadata, err := sm.GetFileMetadata(ctx, fileID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -266,7 +266,7 @@ func (sm *StorageManager) GetFile(ctx context.Context, fileID string) (*types.Fi
 		return nil, nil, fmt.Errorf("file not available")
 	}
 
-	filePath, err := sm.filePath(fileID)
+	filePath, err := sm.GetFilePath(fileID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -281,7 +281,7 @@ func (sm *StorageManager) GetFile(ctx context.Context, fileID string) (*types.Fi
 
 // DeleteFile removes the local file, metadata, and cached merkle state.
 func (sm *StorageManager) DeleteFile(ctx context.Context, fileID string) error {
-	filePath, err := sm.filePath(fileID)
+	filePath, err := sm.GetFilePath(fileID)
 	if err != nil {
 		return err
 	}
@@ -305,7 +305,7 @@ func (sm *StorageManager) DeleteFile(ctx context.Context, fileID string) error {
 }
 
 func (sm *StorageManager) ProveFile(ctx context.Context, fileID string, challengeID string, chunk int64) error {
-	filePath, err := sm.filePath(fileID)
+	filePath, err := sm.GetFilePath(fileID)
 	if err != nil {
 		return err
 	}
@@ -360,7 +360,7 @@ func (sm *StorageManager) ListFiles(ctx context.Context, page, pageSize int) (*t
 	var allFiles []types.FileMetadata
 	for _, key := range fileKeys {
 		fileID := strings.TrimPrefix(key, filePrefix)
-		metadata, err := sm.getMetadata(ctx, fileID)
+		metadata, err := sm.GetFileMetadata(ctx, fileID)
 		if err == nil && metadata != nil {
 			allFiles = append(allFiles, *metadata)
 		}
@@ -407,7 +407,7 @@ func (sm *StorageManager) VerifyFileIntegrity(ctx context.Context, fileID *strin
 		return false, fmt.Errorf("file id is required")
 	}
 
-	filePath, err := sm.filePath(*fileID)
+	filePath, err := sm.GetFilePath(*fileID)
 	if err != nil {
 		return false, err
 	}
@@ -493,7 +493,7 @@ func (sm *StorageManager) storeMetadata(ctx context.Context, metadata *types.Fil
 	return sm.db.SetJSON(ctx, FileKey(metadata.FID), metadata)
 }
 
-func (sm *StorageManager) getMetadata(ctx context.Context, fileID string) (*types.FileMetadata, error) {
+func (sm *StorageManager) GetFileMetadata(ctx context.Context, fileID string) (*types.FileMetadata, error) {
 	if err := validateFileID(fileID); err != nil {
 		return nil, err
 	}

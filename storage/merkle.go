@@ -39,8 +39,8 @@ func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*me
 		hasher.Write(chunk)
 		chunkHash := hasher.Sum(nil)
 
-		fmt.Println("leaf:", hex.EncodeToString(chunkHash))
-		fmt.Println("len:", len(chunk))
+		// fmt.Println("leaf:", hex.EncodeToString(chunkHash))
+		// fmt.Println("len:", len(chunk))
 		// fmt.Println(chunk)
 		leaves = append(leaves, chunkHash)
 	}
@@ -49,7 +49,7 @@ func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*me
 		leaves = append(leaves, leaves[len(leaves)-1])
 	}
 
-	fmt.Println("Leaves:", leaves)
+	// fmt.Println("Leaves:", leaves)
 
 	// create merkle tree
 	tree, err := merkletree.New(
@@ -59,9 +59,9 @@ func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*me
 	if err != nil {
 		return nil, fmt.Errorf("failed to create merkle tree: %w", err)
 	}
-	fmt.Println(tree.Leaves)
-	fmt.Println(tree.Root)
-	fmt.Println(tree)
+	// fmt.Println(tree.Leaves)
+	// fmt.Println(tree.Root)
+	// fmt.Println(tree)
 	merkleRoot := tree.Root
 
 	sm.logger.Debug("Merkle tree created",

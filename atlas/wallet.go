@@ -66,7 +66,6 @@ const (
 	walletTxQueueSize     = 1000
 	walletTxOpTimeout     = 10 * time.Second
 	walletTxCommitTimeout = 2 * time.Minute
-	walletTxDefaultGas    = 200000
 )
 
 func NewAtlasWallet(cfg *config.Config, logger *zap.Logger, clientCtx *client.Context, queryClients *types.QueryClients) (*AtlasWallet, error) {
@@ -275,7 +274,7 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 		WithTxConfig(w.clientCtx.TxConfig).
 		WithAccountRetriever(w.clientCtx.AccountRetriever).
 		WithChainID(w.clientCtx.ChainID).
-		WithGas(walletTxDefaultGas).
+		WithGas(250000). // Default gas, will be adjusted by simulation
 		WithGasAdjustment(w.gasAdjustment).
 		WithGasPrices(w.gasPrices).
 		WithKeybase(w.clientCtx.Keyring).
@@ -286,19 +285,10 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 		WithFromName("cygnus")
 
 	if w.clientCtx.GRPCClient == nil {
-		return nil, fmt.Errorf("GRPC connection not established")
+		return nil, fmt.Errorf("GRPC connection not established - cannot simulate gas")
 	}
 
-	simAccountNumber, simSequence, err := w.queryAccountInfo(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	simTxf := txf.
-		WithAccountNumber(simAccountNumber).
-		WithSequence(simSequence)
-
-	simulatedGas, adjusted, err := tx.CalculateGas(w.clientCtx, simTxf, msgs...)
+	simulatedGas, adjusted, err := tx.CalculateGas(w.clientCtx, txf, msgs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to simulate gas: %w", err)
 	}
@@ -307,8 +297,7 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 		zap.Uint64("simulated_gas", simulatedGas.GasInfo.GasWanted),
 		zap.Uint64("adjusted_gas", adjusted),
 		zap.String("gas_prices", w.gasPrices),
-		zap.Uint64("sequence", sequence),
-		zap.Uint64("simulation_sequence", simSequence))
+		zap.Uint64("sequence", sequence))
 
 	txf = txf.WithGas(adjusted)
 

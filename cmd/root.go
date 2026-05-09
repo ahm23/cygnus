@@ -128,7 +128,7 @@ func RootCmd() *cobra.Command {
 	}
 
 	// r.AddCommand(StartCmd(), wallet.WalletCmd(), InitCmd(), VersionCmd(), IPFSCmd(), ShutdownCmd(), database.DataCmd())
-	r.AddCommand(InitCmd(), VersionCmd(), StartCmd())
+	r.AddCommand(InitCmd(), VersionCmd(), StartCmd(), StressTestCmd())
 
 	return r
 }

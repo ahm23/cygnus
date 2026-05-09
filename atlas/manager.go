@@ -107,6 +107,10 @@ func (am *AtlasManager) ConnectWallet() error {
 
 // Close closes the GRPC connection
 func (am *AtlasManager) Close() error {
+	if am.Wallet != nil {
+		am.Wallet.Stop()
+	}
+
 	if am.grpcConn != nil {
 		return am.grpcConn.Close()
 	}

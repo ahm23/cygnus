@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,7 +41,32 @@ type AtlasWallet struct {
 
 	gasPrices     string
 	gasAdjustment float64
+
+	txQueue    chan *walletTxRequest
+	txStopChan chan struct{}
+	txWG       sync.WaitGroup
+	txStopOnce sync.Once
+	txQueueMu  sync.RWMutex
+	txStopped  bool
 }
+
+type walletTxRequest struct {
+	retries int
+	wait    bool
+	msgs    []sdk.Msg
+	result  chan walletTxResult
+}
+
+type walletTxResult struct {
+	resp *sdk.TxResponse
+	err  error
+}
+
+const (
+	walletTxQueueSize     = 1000
+	walletTxOpTimeout     = 10 * time.Second
+	walletTxCommitTimeout = 2 * time.Minute
+)
 
 func NewAtlasWallet(cfg *config.Config, logger *zap.Logger, clientCtx *client.Context, queryClients *types.QueryClients) (*AtlasWallet, error) {
 	gasPrices := cfg.ChainCfg.GasPrice
@@ -98,25 +124,153 @@ func NewAtlasWallet(cfg *config.Config, logger *zap.Logger, clientCtx *client.Co
 		address:       address,
 		gasPrices:     gasPrices,
 		gasAdjustment: gasAdjustment,
+
+		txQueue:    make(chan *walletTxRequest, walletTxQueueSize),
+		txStopChan: make(chan struct{}),
 	}
 
 	if err := w.refreshAccountInfo(context.Background()); err != nil {
 		return nil, fmt.Errorf("failed to fetch initial account info: %w", err)
 	}
 
+	w.startTxQueue()
+
 	return w, nil
 }
 
 // BroadcastTx broadcasts a transaction
 func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// get current sequence
-	sequence, err := w.getNextSequence()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get sequence: %w", err)
+	msgsCopy := append([]sdk.Msg(nil), msgs...)
+	req := &walletTxRequest{
+		retries: retries,
+		wait:    wait,
+		msgs:    msgsCopy,
+		result:  make(chan walletTxResult, 1),
 	}
+
+	w.txQueueMu.RLock()
+	if w.txStopped {
+		w.txQueueMu.RUnlock()
+		return nil, fmt.Errorf("wallet transaction queue stopped")
+	}
+	select {
+	case w.txQueue <- req:
+		w.txQueueMu.RUnlock()
+	case <-w.txStopChan:
+		w.txQueueMu.RUnlock()
+		return nil, fmt.Errorf("wallet transaction queue stopped")
+	}
+
+	result := <-req.result
+	return result.resp, result.err
+}
+
+func (w *AtlasWallet) startTxQueue() {
+	w.txWG.Add(1)
+	go w.processTxQueue()
+}
+
+func (w *AtlasWallet) Stop() {
+	w.txStopOnce.Do(func() {
+		w.txQueueMu.Lock()
+		w.txStopped = true
+		close(w.txStopChan)
+		w.txQueueMu.Unlock()
+		w.txWG.Wait()
+	})
+}
+
+func (w *AtlasWallet) processTxQueue() {
+	defer w.txWG.Done()
+
+	for {
+		select {
+		case <-w.txStopChan:
+			w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
+			return
+		case req := <-w.txQueue:
+			w.handleQueuedTx(req)
+		}
+	}
+}
+
+func (w *AtlasWallet) failQueuedTxs(err error) {
+	for {
+		select {
+		case req := <-w.txQueue:
+			req.result <- walletTxResult{err: err}
+		default:
+			return
+		}
+	}
+}
+
+func (w *AtlasWallet) handleQueuedTx(req *walletTxRequest) {
+	w.broadcastQueuedTx(req)
+}
+
+func (w *AtlasWallet) broadcastQueuedTx(req *walletTxRequest) {
+	var lastErr error
+	resultSent := false
+
+	for attempt := 0; attempt <= req.retries; attempt++ {
+		if attempt > 0 {
+			w.logger.Warn("Retrying queued transaction", zap.Int("attempt", attempt))
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), walletTxOpTimeout)
+		txResp, err := w.signAndBroadcastOnce(ctx, req.msgs...)
+		cancel()
+		if err != nil {
+			lastErr = err
+			if w.isSequenceError(err) {
+				w.logger.Warn("Sequence error detected, refreshing account info", zap.Error(err))
+				if refreshErr := w.refreshAccountInfo(context.Background()); refreshErr != nil {
+					w.logger.Error("Failed to refresh account info", zap.Error(refreshErr))
+				}
+			}
+			continue
+		}
+
+		w.incrementSequence()
+
+		if !req.wait {
+			req.result <- walletTxResult{resp: txResp}
+			resultSent = true
+		}
+
+		confirmedResp, confirmErr := w.waitForTxWithTimeout(txResp.TxHash, walletTxCommitTimeout)
+		if confirmErr != nil {
+			w.logger.Error("Transaction did not confirm before queue continued",
+				zap.String("tx_hash", txResp.TxHash),
+				zap.Error(confirmErr))
+			if refreshErr := w.refreshAccountInfo(context.Background()); refreshErr != nil {
+				w.logger.Error("Failed to refresh account info after confirmation error", zap.Error(refreshErr))
+			}
+			if req.wait {
+				req.result <- walletTxResult{resp: confirmedResp, err: confirmErr}
+			}
+			return
+		}
+
+		if req.wait {
+			req.result <- walletTxResult{resp: confirmedResp}
+		}
+		return
+	}
+
+	if lastErr != nil {
+		req.result <- walletTxResult{err: lastErr}
+		return
+	}
+	if !resultSent {
+		req.result <- walletTxResult{err: fmt.Errorf("failed after %d retries", req.retries)}
+	}
+}
+
+func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
+	accountNumber, sequence := w.accountInfo()
 
 	// Create transaction factory with proper settings
 	txf := tx.Factory{}.
@@ -127,7 +281,7 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 		WithGasAdjustment(w.gasAdjustment).
 		WithGasPrices(w.gasPrices).
 		WithKeybase(w.clientCtx.Keyring).
-		WithAccountNumber(w.accountNumber).
+		WithAccountNumber(accountNumber).
 		WithSequence(sequence).
 		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT).
 		WithSimulateAndExecute(true).
@@ -146,7 +300,8 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 	w.logger.Debug("Gas simulation result",
 		zap.Uint64("simulated_gas", simulatedGas.GasInfo.GasWanted),
 		zap.Uint64("adjusted_gas", adjusted),
-		zap.String("gas_prices", w.gasPrices))
+		zap.String("gas_prices", w.gasPrices),
+		zap.Uint64("sequence", sequence))
 
 	txf = txf.WithGas(adjusted)
 
@@ -155,34 +310,6 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to build tx: %w", err)
 	}
-	// pk, _ := txb.GetTx().GetPubKeys()
-	// fmt.Println("\nTX:\n", pk)
-
-	// Before signing, print all signing data
-	fmt.Println("=== Signing Debug ===")
-	fmt.Printf("Chain ID: %s\n", txf.ChainID())
-	fmt.Printf("Account Number: %d\n", txf.AccountNumber())
-	fmt.Printf("Sequence: %d\n", txf.Sequence())
-	fmt.Printf("From Name: %s\n", txf.FromName())
-	fmt.Printf("Sign Mode: %v\n", txf.SignMode())
-
-	// // Try to sign manually to see error
-	// signerData := signing1.SignerData{
-	// 		ChainID:       txf.ChainID(),
-	// 		AccountNumber: txf.AccountNumber(),
-	// 		Sequence:      txf.Sequence(),
-	// }
-
-	// // Get sign bytes
-	// signBytes, err := w.clientCtx.TxConfig.SignModeHandler().GetSignBytes(ctx,
-	// 		txf.SignMode(),
-	// 		signerData,
-	// 		txb.GetTx(),
-	// )
-	if err != nil {
-		return nil, fmt.Errorf("failed to get sign bytes: %w", err)
-	}
-	// fmt.Printf("Sign bytes length: %d\n", len(signBytes))
 
 	// sign the transaction
 	err = tx.Sign(ctx, txf, "cygnus", txb, true)
@@ -191,23 +318,26 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 	}
 
 	// Encode
-	fmt.Println("\nEncoding...")
 	txBytes, err := w.clientCtx.TxConfig.TxEncoder()(txb.GetTx())
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode tx: %w", err)
 	}
 
 	// Broadcast
-	return w.broadcastWithRetry(ctx, txBytes, retries, wait)
+	return w.broadcastTxBytes(ctx, txBytes, false)
 }
 
 // WaitForTx waits for transaction to be included in a block
 func (w *AtlasWallet) WaitForTx(txHash string) (*sdk.TxResponse, error) {
+	return w.waitForTxWithTimeout(txHash, walletTxOpTimeout)
+}
+
+func (w *AtlasWallet) waitForTxWithTimeout(txHash string, timeout time.Duration) (*sdk.TxResponse, error) {
 	if w.txClient == nil {
 		return nil, fmt.Errorf("tx client not initialized")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	ticker := time.NewTicker(1 * time.Second)
@@ -218,7 +348,7 @@ func (w *AtlasWallet) WaitForTx(txHash string) (*sdk.TxResponse, error) {
 		case <-ctx.Done():
 			w.logger.Warn("Timeout waiting for transaction",
 				zap.String("tx_hash", txHash),
-				zap.Duration("timeout", 10*time.Second))
+				zap.Duration("timeout", timeout))
 			return nil, ctx.Err()
 
 		case <-ticker.C:
@@ -239,43 +369,14 @@ func (w *AtlasWallet) WaitForTx(txHash string) (*sdk.TxResponse, error) {
 }
 
 func (w *AtlasWallet) GetSequence() uint64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
 	return w.sequence
 }
 
 func (w *AtlasWallet) GetAddress() string {
 	return w.address.String()
-}
-
-// broadcastWithRetry handles broadcasting with retry for sequence errors
-func (w *AtlasWallet) broadcastWithRetry(ctx context.Context, txBytes []byte, retries int, wait bool) (*sdk.TxResponse, error) {
-
-	for attempt := 0; attempt <= retries; attempt++ {
-		if attempt > 0 {
-			w.logger.Warn("Retrying transaction broadcast", zap.Int("attempt", attempt))
-			time.Sleep(time.Duration(attempt) * time.Second) // Exponential backoff
-		}
-
-		txResp, err := w.broadcastTxBytes(ctx, txBytes, wait)
-		if err == nil {
-			return txResp, nil
-		}
-
-		fmt.Println(err.Error())
-		// Check if it's a sequence error
-		if w.isSequenceError(err) {
-			w.logger.Warn("Sequence error detected, refreshing account info")
-
-			// Refresh account info and get new sequence
-			if refreshErr := w.refreshAccountInfo(ctx); refreshErr != nil {
-				w.logger.Error("Failed to refresh account info", zap.Error(refreshErr))
-			}
-
-			// Non-retryable error
-			return nil, err
-		}
-	}
-
-	return nil, fmt.Errorf("failed after %d retries", retries)
 }
 
 // broadcastTxBytes broadcasts encoded transaction bytes
@@ -333,15 +434,18 @@ func (w *AtlasWallet) refreshAccountInfo(ctx context.Context) error {
 	return nil
 }
 
-// getNextSequence returns the next sequence to use
-func (w *AtlasWallet) getNextSequence() (uint64, error) {
+func (w *AtlasWallet) accountInfo() (uint64, uint64) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	return w.accountNumber, w.sequence
+}
+
+func (w *AtlasWallet) incrementSequence() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	sequence := w.sequence
 	w.sequence++
-
-	return sequence, nil
 }
 
 func (w *AtlasWallet) isSequenceError(err error) bool {
@@ -355,14 +459,9 @@ func (w *AtlasWallet) isSequenceError(err error) bool {
 	}
 
 	for _, seqErr := range sequenceErrors {
-		if contains(errStr, seqErr) {
+		if strings.Contains(errStr, seqErr) {
 			return true
 		}
 	}
 	return false
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
-		(s[:len(substr)] == substr || contains(s[1:], substr)))
 }

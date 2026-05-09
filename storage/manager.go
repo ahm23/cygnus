@@ -83,6 +83,9 @@ func (sm *StorageManager) currentUsage(ctx context.Context) (int64, int64, error
 
 	err := filepath.Walk(sm.config.DataDirectory, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
 		relPath, relErr := filepath.Rel(sm.config.DataDirectory, path)

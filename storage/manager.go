@@ -155,7 +155,7 @@ func (sm *StorageManager) submitProof(ctx context.Context, fileID, challengeID s
 		Chunk:       chunkIndex,
 	}
 
-	if _, err := sm.atlas.Wallet.BroadcastTxGrpc(0, true, msg); err != nil {
+	if _, err := sm.atlas.Wallet.BroadcastTxGrpc(0, false, msg); err != nil {
 		return err
 	}
 

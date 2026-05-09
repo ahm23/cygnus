@@ -66,6 +66,7 @@ const (
 	walletTxQueueSize     = 1000
 	walletTxOpTimeout     = 10 * time.Second
 	walletTxCommitTimeout = 2 * time.Minute
+	walletTxDefaultGas    = 200000
 )
 
 func NewAtlasWallet(cfg *config.Config, logger *zap.Logger, clientCtx *client.Context, queryClients *types.QueryClients) (*AtlasWallet, error) {
@@ -211,7 +212,6 @@ func (w *AtlasWallet) handleQueuedTx(req *walletTxRequest) {
 
 func (w *AtlasWallet) broadcastQueuedTx(req *walletTxRequest) {
 	var lastErr error
-	resultSent := false
 
 	for attempt := 0; attempt <= req.retries; attempt++ {
 		if attempt > 0 {
@@ -237,7 +237,7 @@ func (w *AtlasWallet) broadcastQueuedTx(req *walletTxRequest) {
 
 		if !req.wait {
 			req.result <- walletTxResult{resp: txResp}
-			resultSent = true
+			return
 		}
 
 		confirmedResp, confirmErr := w.waitForTxWithTimeout(txResp.TxHash, walletTxCommitTimeout)
@@ -264,9 +264,7 @@ func (w *AtlasWallet) broadcastQueuedTx(req *walletTxRequest) {
 		req.result <- walletTxResult{err: lastErr}
 		return
 	}
-	if !resultSent {
-		req.result <- walletTxResult{err: fmt.Errorf("failed after %d retries", req.retries)}
-	}
+	req.result <- walletTxResult{err: fmt.Errorf("failed after %d retries", req.retries)}
 }
 
 func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
@@ -277,7 +275,7 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 		WithTxConfig(w.clientCtx.TxConfig).
 		WithAccountRetriever(w.clientCtx.AccountRetriever).
 		WithChainID(w.clientCtx.ChainID).
-		WithGas(200000). // Default gas, will be adjusted by simulation
+		WithGas(walletTxDefaultGas).
 		WithGasAdjustment(w.gasAdjustment).
 		WithGasPrices(w.gasPrices).
 		WithKeybase(w.clientCtx.Keyring).
@@ -288,11 +286,19 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 		WithFromName("cygnus")
 
 	if w.clientCtx.GRPCClient == nil {
-		return nil, fmt.Errorf("GRPC connection not established - cannot simulate gas")
+		return nil, fmt.Errorf("GRPC connection not established")
 	}
 
-	// simulate and update gas
-	simulatedGas, adjusted, err := tx.CalculateGas(w.clientCtx, txf, msgs...)
+	simAccountNumber, simSequence, err := w.queryAccountInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	simTxf := txf.
+		WithAccountNumber(simAccountNumber).
+		WithSequence(simSequence)
+
+	simulatedGas, adjusted, err := tx.CalculateGas(w.clientCtx, simTxf, msgs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to simulate gas: %w", err)
 	}
@@ -301,7 +307,8 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 		zap.Uint64("simulated_gas", simulatedGas.GasInfo.GasWanted),
 		zap.Uint64("adjusted_gas", adjusted),
 		zap.String("gas_prices", w.gasPrices),
-		zap.Uint64("sequence", sequence))
+		zap.Uint64("sequence", sequence),
+		zap.Uint64("simulation_sequence", simSequence))
 
 	txf = txf.WithGas(adjusted)
 
@@ -409,29 +416,38 @@ func (w *AtlasWallet) broadcastTxBytes(ctx context.Context, txBytes []byte, wait
 
 // refreshAccountInfo fetches fresh account info from chain
 func (w *AtlasWallet) refreshAccountInfo(ctx context.Context) error {
+	accountNumber, sequence, err := w.queryAccountInfo(ctx)
+	if err != nil {
+		return err
+	}
+
+	w.mu.Lock()
+	w.accountNumber = accountNumber
+	w.sequence = sequence
+	w.mu.Unlock()
+
+	w.logger.Debug("Refreshed account info",
+		zap.Uint64("account_number", accountNumber),
+		zap.Uint64("sequence", sequence))
+
+	return nil
+}
+
+func (w *AtlasWallet) queryAccountInfo(ctx context.Context) (uint64, uint64, error) {
 	resp, err := w.queryClients.Auth.Account(ctx, &authtypes.QueryAccountRequest{
 		Address: w.address.String(),
 	})
 	if err != nil {
-		return fmt.Errorf("failed to query account: %w", err)
+		return 0, 0, fmt.Errorf("failed to query account: %w", err)
 	}
 
 	var acc sdk.AccountI
 	err = w.clientCtx.InterfaceRegistry.UnpackAny(resp.Account, &acc)
 	if err != nil {
-		return fmt.Errorf("failed to unpack account: %w", err)
+		return 0, 0, fmt.Errorf("failed to unpack account: %w", err)
 	}
 
-	w.mu.Lock()
-	w.accountNumber = acc.GetAccountNumber()
-	w.sequence = acc.GetSequence()
-	w.mu.Unlock()
-
-	w.logger.Debug("Refreshed account info",
-		zap.Uint64("account_number", w.accountNumber),
-		zap.Uint64("sequence", w.sequence))
-
-	return nil
+	return acc.GetAccountNumber(), acc.GetSequence(), nil
 }
 
 func (w *AtlasWallet) accountInfo() (uint64, uint64) {

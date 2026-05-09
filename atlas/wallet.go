@@ -37,9 +37,25 @@ type AtlasWallet struct {
 	address       sdk.Address
 	accountNumber uint64
 	sequence      uint64
+
+	gasPrices     string
+	gasAdjustment float64
 }
 
 func NewAtlasWallet(cfg *config.Config, logger *zap.Logger, clientCtx *client.Context, queryClients *types.QueryClients) (*AtlasWallet, error) {
+	gasPrices := cfg.ChainCfg.GasPrice
+	if gasPrices == "" {
+		gasPrices = config.DefaultChainConfig().GasPrice
+	}
+	if _, err := sdk.ParseDecCoins(gasPrices); err != nil {
+		return nil, fmt.Errorf("invalid gas price %q: %w", gasPrices, err)
+	}
+
+	gasAdjustment := cfg.ChainCfg.GasAdjustment
+	if gasAdjustment <= 0 {
+		gasAdjustment = config.DefaultChainConfig().GasAdjustment
+	}
+
 	// Get encoding config from your blockchain
 	encodingConfig := app.MakeEncodingConfig()
 
@@ -79,7 +95,9 @@ func NewAtlasWallet(cfg *config.Config, logger *zap.Logger, clientCtx *client.Co
 		queryClients: queryClients,
 		txClient:     sdktx.NewServiceClient(clientCtx.GRPCClient),
 
-		address: address,
+		address:       address,
+		gasPrices:     gasPrices,
+		gasAdjustment: gasAdjustment,
 	}
 
 	if err := w.refreshAccountInfo(context.Background()); err != nil {
@@ -106,8 +124,8 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 		WithAccountRetriever(w.clientCtx.AccountRetriever).
 		WithChainID(w.clientCtx.ChainID).
 		WithGas(200000). // Default gas, will be adjusted by simulation
-		WithGasAdjustment(1.2).
-		WithFees("2000uatl"). // Adjust based on your chain
+		WithGasAdjustment(w.gasAdjustment).
+		WithGasPrices(w.gasPrices).
 		WithKeybase(w.clientCtx.Keyring).
 		WithAccountNumber(w.accountNumber).
 		WithSequence(sequence).
@@ -127,7 +145,8 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 
 	w.logger.Debug("Gas simulation result",
 		zap.Uint64("simulated_gas", simulatedGas.GasInfo.GasWanted),
-		zap.Uint64("adjusted_gas", adjusted))
+		zap.Uint64("adjusted_gas", adjusted),
+		zap.String("gas_prices", w.gasPrices))
 
 	txf = txf.WithGas(adjusted)
 

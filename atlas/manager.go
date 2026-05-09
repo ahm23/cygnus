@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
-	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/cosmos/cosmos-sdk/client"
 	"go.uber.org/zap"
 
@@ -105,47 +103,6 @@ func (am *AtlasManager) ConnectWallet() error {
 	wallet, err := NewAtlasWallet(am.cfg, am.logger, &am.clientCtx, &am.QueryClients)
 	am.Wallet = wallet
 	return err
-}
-
-// WaitForNextBlock waits until the chain has produced a block after the
-// currently observed height.
-func (am *AtlasManager) WaitForNextBlock(ctx context.Context) error {
-	rpcAddr := strings.TrimSuffix(am.cfg.ChainCfg.RPCAddr, "/")
-	if !strings.HasPrefix(rpcAddr, "http://") && !strings.HasPrefix(rpcAddr, "https://") {
-		rpcAddr = "http://" + rpcAddr
-	}
-
-	client, err := rpchttp.New(rpcAddr, "/websocket")
-	if err != nil {
-		return fmt.Errorf("failed to create RPC client: %w", err)
-	}
-
-	status, err := client.Status(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get current block height: %w", err)
-	}
-
-	targetHeight := status.SyncInfo.LatestBlockHeight + 1
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			status, err := client.Status(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to get latest block height: %w", err)
-			}
-			if status.SyncInfo.LatestBlockHeight >= targetHeight {
-				am.logger.Debug("Observed next block",
-					zap.Int64("target_height", targetHeight),
-					zap.Int64("latest_height", status.SyncInfo.LatestBlockHeight))
-				return nil
-			}
-		}
-	}
 }
 
 // Close closes the GRPC connection

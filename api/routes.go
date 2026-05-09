@@ -10,7 +10,7 @@ import (
 )
 
 func (a *API) SetupRoutes(cfg *config.Config, logger *zap.Logger, atlas *atlas.AtlasManager, storageManager *storage.StorageManager) {
-	handler := NewHandler(storageManager, atlas, logger, cfg)
+	handler := NewHandler(storageManager, logger, cfg)
 	middleware := Middleware{
 		AtlasQueryClients: &atlas.QueryClients,
 		StorageManager:    storageManager,

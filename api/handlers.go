@@ -3,7 +3,6 @@ package api
 import (
 	"strconv"
 
-	atlasmanager "cygnus/atlas"
 	"cygnus/config"
 	"cygnus/storage"
 	"cygnus/types"
@@ -14,15 +13,13 @@ import (
 
 type Handler struct {
 	storageManager *storage.StorageManager
-	atlasManager   *atlasmanager.AtlasManager
 	logger         *zap.Logger
 	config         *config.Config
 }
 
-func NewHandler(storageManager *storage.StorageManager, atlasManager *atlasmanager.AtlasManager, logger *zap.Logger, cfg *config.Config) *Handler {
+func NewHandler(storageManager *storage.StorageManager, logger *zap.Logger, cfg *config.Config) *Handler {
 	return &Handler{
 		storageManager: storageManager,
-		atlasManager:   atlasManager,
 		logger:         logger,
 		config:         cfg,
 	}
@@ -71,11 +68,6 @@ func (h *Handler) UploadFile(c *fiber.Ctx) error {
 	metadata, err := h.storageManager.CreateFile(c.Context(), fileID, fileHeader)
 	if err != nil {
 		h.logger.Error("Failed to upload file", zap.String("file_id", fileID), zap.Error(err))
-		return respondError(c, fiber.StatusInternalServerError, err.Error())
-	}
-
-	if err := h.atlasManager.WaitForNextBlock(c.Context()); err != nil {
-		h.logger.Error("Failed waiting for next block after upload", zap.String("file_id", fileID), zap.Error(err))
 		return respondError(c, fiber.StatusInternalServerError, err.Error())
 	}
 

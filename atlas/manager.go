@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/cosmos/cosmos-sdk/client"
 	"go.uber.org/zap"
 
@@ -111,6 +113,37 @@ func (am *AtlasManager) ConnectWalletWithKeyNameAndSource(keyName, keySource str
 	wallet, err := NewAtlasWalletWithKeyNameAndSource(am.cfg, am.logger, &am.clientCtx, &am.QueryClients, keyName, keySource)
 	am.Wallet = wallet
 	return err
+}
+
+func (am *AtlasManager) WaitForHeight(ctx context.Context, targetHeight int64) error {
+	rpcAddr := strings.TrimSuffix(am.cfg.ChainCfg.RPCAddr, "/")
+	if !strings.HasPrefix(rpcAddr, "http://") && !strings.HasPrefix(rpcAddr, "https://") {
+		rpcAddr = "http://" + rpcAddr
+	}
+
+	client, err := rpchttp.New(rpcAddr, "/websocket")
+	if err != nil {
+		return fmt.Errorf("failed to create RPC client: %w", err)
+	}
+
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		status, err := client.Status(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get latest block height: %w", err)
+		}
+		if status.SyncInfo.LatestBlockHeight >= targetHeight {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // Close closes the GRPC connection

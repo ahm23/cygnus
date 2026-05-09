@@ -12,6 +12,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const challengeProofSpreadBlocks = 9
+
 // chainEventReceiver bridges atlas blockchain events to the storage manager.
 type chainEventReceiver struct {
 	atlas   *atlas.AtlasManager
@@ -46,7 +48,60 @@ func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64
 		return err
 	}
 
-	for _, challenge := range res.Challenges {
+	r.scheduleChallengeProofs(ctx, height, roundOrData, res.Challenges)
+
+	return nil
+}
+
+func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundStartHeight int64, round string, challenges []*storageTypes.StorageChallenge) {
+	if len(challenges) == 0 {
+		r.logger.Info("No challenges to prove for proof round",
+			zap.Int64("height", roundStartHeight),
+			zap.String("round", round))
+		return
+	}
+
+	batches := make(map[int64][]*storageTypes.StorageChallenge)
+	for i, challenge := range challenges {
+		targetHeight := roundStartHeight + 1 + int64(i%challengeProofSpreadBlocks)
+		if challenge.DeadlineHeight > 0 && targetHeight >= int64(challenge.DeadlineHeight) {
+			targetHeight = int64(challenge.DeadlineHeight) - 1
+		}
+		if targetHeight <= roundStartHeight {
+			targetHeight = roundStartHeight + 1
+		}
+		batches[targetHeight] = append(batches[targetHeight], challenge)
+	}
+
+	r.logger.Info("Scheduled challenge proofs across upcoming blocks",
+		zap.Int64("round_start_height", roundStartHeight),
+		zap.String("round", round),
+		zap.Int("challenge_count", len(challenges)),
+		zap.Int("block_count", len(batches)))
+
+	for targetHeight, batch := range batches {
+		targetHeight := targetHeight
+		batch := append([]*storageTypes.StorageChallenge(nil), batch...)
+		go r.proveChallengeBatchAtHeight(ctx, round, targetHeight, batch)
+	}
+}
+
+func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, round string, targetHeight int64, challenges []*storageTypes.StorageChallenge) {
+	if err := r.atlas.WaitForHeight(ctx, targetHeight); err != nil {
+		r.logger.Error("Failed waiting to submit scheduled challenge proofs",
+			zap.String("round", round),
+			zap.Int64("target_height", targetHeight),
+			zap.Int("challenge_count", len(challenges)),
+			zap.Error(err))
+		return
+	}
+
+	r.logger.Info("Submitting scheduled challenge proofs",
+		zap.String("round", round),
+		zap.Int64("target_height", targetHeight),
+		zap.Int("challenge_count", len(challenges)))
+
+	for _, challenge := range challenges {
 		r.storage.RecordChainSync(time.Now().UTC())
 		err := r.storage.ProveFile(ctx, challenge.FileId, challenge.ChallengeId, int64(challenge.ChunkIndex))
 		if err != nil {
@@ -54,12 +109,11 @@ func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64
 				zap.String("file_id", challenge.FileId),
 				zap.String("challenge_id", challenge.ChallengeId),
 				zap.Int64("chunk", int64(challenge.ChunkIndex)),
+				zap.Int64("target_height", targetHeight),
 				zap.Error(err))
 			continue
 		}
 	}
-
-	return nil
 }
 
 func (r *chainEventReceiver) OnStartProofWindow(ctx context.Context, height int64, windowOrData string) error {

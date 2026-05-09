@@ -71,7 +71,7 @@ func StressTestCmd() *cobra.Command {
 			if fileSize < 1 {
 				return fmt.Errorf("--size must be at least 1 byte")
 			}
-			if postBatchSize < 1 || postBatchSize > defaultStressPostBatchSize {
+			if postBatchSize < 1 {
 				return fmt.Errorf("--post-batch-size must be between 1 and %d", defaultStressPostBatchSize)
 			}
 			if uploadBatchSize < 1 {

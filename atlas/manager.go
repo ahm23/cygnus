@@ -100,7 +100,15 @@ func (am *AtlasManager) ConnectGRPC() error {
 }
 
 func (am *AtlasManager) ConnectWallet() error {
-	wallet, err := NewAtlasWallet(am.cfg, am.logger, &am.clientCtx, &am.QueryClients)
+	return am.ConnectWalletWithKeyName("cygnus")
+}
+
+func (am *AtlasManager) ConnectWalletWithKeyName(keyName string) error {
+	return am.ConnectWalletWithKeyNameAndSource(keyName, am.cfg.HomeDir)
+}
+
+func (am *AtlasManager) ConnectWalletWithKeyNameAndSource(keyName, keySource string) error {
+	wallet, err := NewAtlasWalletWithKeyNameAndSource(am.cfg, am.logger, &am.clientCtx, &am.QueryClients, keyName, keySource)
 	am.Wallet = wallet
 	return err
 }

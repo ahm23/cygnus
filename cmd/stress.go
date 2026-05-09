@@ -54,6 +54,8 @@ func StressTestCmd() *cobra.Command {
 	var subscription string
 	var tempDir string
 	var keepFiles bool
+	var keyName string
+	var keySource string
 
 	cmd := &cobra.Command{
 		Use:   "stress-test",
@@ -75,6 +77,7 @@ func StressTestCmd() *cobra.Command {
 			if uploadBatchSize < 1 {
 				return fmt.Errorf("--upload-batch-size must be at least 1")
 			}
+			normalizedKeySource := normalizeStressKeySource(keySource)
 
 			home, err := cmd.Flags().GetString(FlagHome)
 			if err != nil {
@@ -120,6 +123,10 @@ func StressTestCmd() *cobra.Command {
 			fmt.Printf("  upload URL:     %s\n", uploadURL)
 			fmt.Printf("  post batch:     %d\n", postBatchSize)
 			fmt.Printf("  upload batch:   %d\n", uploadBatchSize)
+			fmt.Printf("  key name:       %s\n", keyName)
+			if normalizedKeySource != "" {
+				fmt.Printf("  key source:     %s\n", normalizedKeySource)
+			}
 
 			files, err := createStressFiles(workDir, cfg.ProviderName, fileCount, fileSize)
 			if err != nil {
@@ -135,7 +142,8 @@ func StressTestCmd() *cobra.Command {
 			if err := am.ConnectGRPC(); err != nil {
 				return err
 			}
-			if err := am.ConnectWallet(); err != nil {
+
+			if err := am.ConnectWalletWithKeyNameAndSource(keyName, normalizedKeySource); err != nil {
 				return err
 			}
 
@@ -156,10 +164,26 @@ func StressTestCmd() *cobra.Command {
 	cmd.Flags().StringVar(&subscription, "subscription", "", "subscription ID for MsgPostFile; empty uses chain default")
 	cmd.Flags().StringVar(&tempDir, "temp-dir", "", "directory for generated files; default creates a temporary directory")
 	cmd.Flags().BoolVar(&keepFiles, "keep-files", false, "keep generated files after the command exits")
+	cmd.Flags().StringVar(&keyName, "key-name", "cygnus", "keyring key name to use for MsgPostFile transactions")
+	cmd.Flags().StringVar(&keySource, "key-source", "", "keyring home/root directory, or a keyring-test/keyring-file directory; default uses --home")
 	_ = cmd.MarkFlagRequired("files")
 	_ = cmd.MarkFlagRequired("size")
 
 	return cmd
+}
+
+func normalizeStressKeySource(keySource string) string {
+	keySource = strings.TrimSpace(os.ExpandEnv(keySource))
+	if keySource == "" {
+		return ""
+	}
+
+	base := filepath.Base(filepath.Clean(keySource))
+	if base == "keyring-test" || base == "keyring-file" {
+		return filepath.Dir(keySource)
+	}
+
+	return keySource
 }
 
 func createStressFiles(dir, providerName string, count int, size int64) ([]stressFile, error) {

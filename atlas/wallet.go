@@ -35,6 +35,7 @@ type AtlasWallet struct {
 	queryClients *types.QueryClients
 	txClient     sdktx.ServiceClient
 
+	keyName       string
 	address       sdk.Address
 	accountNumber uint64
 	sequence      uint64
@@ -69,6 +70,22 @@ const (
 )
 
 func NewAtlasWallet(cfg *config.Config, logger *zap.Logger, clientCtx *client.Context, queryClients *types.QueryClients) (*AtlasWallet, error) {
+	return NewAtlasWalletWithKeyName(cfg, logger, clientCtx, queryClients, "cygnus")
+}
+
+func NewAtlasWalletWithKeyName(cfg *config.Config, logger *zap.Logger, clientCtx *client.Context, queryClients *types.QueryClients, keyName string) (*AtlasWallet, error) {
+	return NewAtlasWalletWithKeyNameAndSource(cfg, logger, clientCtx, queryClients, keyName, cfg.HomeDir)
+}
+
+func NewAtlasWalletWithKeyNameAndSource(cfg *config.Config, logger *zap.Logger, clientCtx *client.Context, queryClients *types.QueryClients, keyName, keySource string) (*AtlasWallet, error) {
+	if strings.TrimSpace(keyName) == "" {
+		return nil, fmt.Errorf("key name cannot be empty")
+	}
+	if strings.TrimSpace(keySource) == "" {
+		keySource = cfg.HomeDir
+	}
+	keySource = os.ExpandEnv(keySource)
+
 	gasPrices := cfg.ChainCfg.GasPrice
 	if gasPrices == "" {
 		gasPrices = config.DefaultChainConfig().GasPrice
@@ -89,7 +106,7 @@ func NewAtlasWallet(cfg *config.Config, logger *zap.Logger, clientCtx *client.Co
 	kr, err := keyring.New(
 		sdk.KeyringServiceName(),
 		cfg.ChainCfg.KeyringBackend,
-		cfg.HomeDir,
+		keySource,
 		os.Stdin,
 		encodingConfig.Codec,
 	)
@@ -97,7 +114,7 @@ func NewAtlasWallet(cfg *config.Config, logger *zap.Logger, clientCtx *client.Co
 		return nil, fmt.Errorf("failed to create keyring: %w", err)
 	}
 
-	info, err := kr.Key("cygnus")
+	info, err := kr.Key(keyName)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +125,7 @@ func NewAtlasWallet(cfg *config.Config, logger *zap.Logger, clientCtx *client.Co
 
 	walletClientCtx := clientCtx.
 		WithKeyring(kr).
-		WithFromName("cygnus").
+		WithFromName(keyName).
 		WithFromAddress(address)
 
 	clientCtx = &walletClientCtx
@@ -121,6 +138,7 @@ func NewAtlasWallet(cfg *config.Config, logger *zap.Logger, clientCtx *client.Co
 		queryClients: queryClients,
 		txClient:     sdktx.NewServiceClient(clientCtx.GRPCClient),
 
+		keyName:       keyName,
 		address:       address,
 		gasPrices:     gasPrices,
 		gasAdjustment: gasAdjustment,
@@ -282,7 +300,7 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 		WithSequence(sequence).
 		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT).
 		WithSimulateAndExecute(true).
-		WithFromName("cygnus")
+		WithFromName(w.keyName)
 
 	if w.clientCtx.GRPCClient == nil {
 		return nil, fmt.Errorf("GRPC connection not established - cannot simulate gas")
@@ -308,7 +326,7 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 	}
 
 	// sign the transaction
-	err = tx.Sign(ctx, txf, "cygnus", txb, true)
+	err = tx.Sign(ctx, txf, w.keyName, txb, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign tx: %w", err)
 	}

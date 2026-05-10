@@ -173,9 +173,6 @@ func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, ro
 		r.recordBlockHeight(latestHeight)
 	}
 
-	r.atlas.Wallet.BeginHighPriorityMode()
-	defer r.atlas.Wallet.EndHighPriorityMode()
-
 	for _, challenge := range challenges {
 		currentHeight := r.currentBlockHeight(targetHeight)
 		if !r.isChallengeCurrent(challenge, currentHeight) {

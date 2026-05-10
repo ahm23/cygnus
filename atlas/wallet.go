@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cosmos/cosmos-sdk/client"
@@ -44,14 +43,13 @@ type AtlasWallet struct {
 	gasPrices     string
 	gasAdjustment float64
 
-	txQueue          chan *walletTxRequest
-	highPriorityTxQ  chan *walletTxRequest
-	txStopChan       chan struct{}
-	txWG             sync.WaitGroup
-	txStopOnce       sync.Once
-	txQueueMu        sync.RWMutex
-	txStopped        bool
-	highPriorityMode atomic.Int64
+	txQueue         chan *walletTxRequest
+	highPriorityTxQ chan *walletTxRequest
+	txStopChan      chan struct{}
+	txWG            sync.WaitGroup
+	txStopOnce      sync.Once
+	txQueueMu       sync.RWMutex
+	txStopped       bool
 }
 
 type TxPriority int
@@ -222,19 +220,10 @@ func (w *AtlasWallet) Stop() {
 	})
 }
 
-func (w *AtlasWallet) BeginHighPriorityMode() {
-	w.highPriorityMode.Add(1)
-}
-
-func (w *AtlasWallet) EndHighPriorityMode() {
-	if w.highPriorityMode.Add(-1) < 0 {
-		w.highPriorityMode.Store(0)
-	}
-}
-
 func (w *AtlasWallet) processTxQueue() {
 	defer w.txWG.Done()
 
+	var pendingNormal *walletTxRequest
 	for {
 		select {
 		case <-w.txStopChan:
@@ -245,25 +234,31 @@ func (w *AtlasWallet) processTxQueue() {
 		default:
 		}
 
-		if w.highPriorityMode.Load() > 0 {
+		if pendingNormal != nil {
 			select {
 			case <-w.txStopChan:
 				w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
+				pendingNormal.result <- walletTxResult{err: fmt.Errorf("wallet transaction queue stopped")}
 				return
 			case req := <-w.highPriorityTxQ:
 				w.handleQueuedTx(req)
-			case <-time.After(25 * time.Millisecond):
+				continue
+			default:
 			}
-		} else {
-			select {
-			case <-w.txStopChan:
-				w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
-				return
-			case req := <-w.highPriorityTxQ:
-				w.handleQueuedTx(req)
-			case req := <-w.txQueue:
-				w.handleQueuedTx(req)
-			}
+
+			w.handleQueuedTx(pendingNormal)
+			pendingNormal = nil
+			continue
+		}
+
+		select {
+		case <-w.txStopChan:
+			w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
+			return
+		case req := <-w.highPriorityTxQ:
+			w.handleQueuedTx(req)
+		case req := <-w.txQueue:
+			pendingNormal = req
 		}
 	}
 }

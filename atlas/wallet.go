@@ -379,20 +379,6 @@ func (w *AtlasWallet) broadcastQueuedTx(req *walletTxRequest) {
 
 func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
 	accountNumber, sequence := w.accountInfo()
-	simSequence := sequence
-
-	chainAccountNumber, chainSequence, err := w.queryAccountInfo(ctx)
-	if err == nil {
-		accountNumber = chainAccountNumber
-		simSequence = chainSequence
-		if chainSequence > sequence {
-			sequence = chainSequence
-			w.setAccountInfo(chainAccountNumber, chainSequence)
-		}
-	} else {
-		w.logger.Warn("Failed to query committed account sequence before gas simulation",
-			zap.Error(err))
-	}
 
 	// Create transaction factory with proper settings
 	txf := tx.Factory{}.
@@ -404,7 +390,7 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 		WithGasPrices(w.gasPrices).
 		WithKeybase(w.clientCtx.Keyring).
 		WithAccountNumber(accountNumber).
-		WithSequence(simSequence).
+		WithSequence(sequence).
 		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT).
 		WithSimulateAndExecute(true).
 		WithFromName(w.keyName)
@@ -424,7 +410,7 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 	// 	zap.String("gas_prices", w.gasPrices),
 	// 	zap.Uint64("sequence", sequence))
 
-	txf = txf.WithGas(adjusted).WithSequence(sequence)
+	txf = txf.WithGas(adjusted)
 
 	// build unsigned transaction
 	txb, err := txf.BuildUnsignedTx(msgs...)
@@ -539,7 +525,10 @@ func (w *AtlasWallet) refreshAccountInfo(ctx context.Context) error {
 		return err
 	}
 
-	w.setAccountInfo(accountNumber, sequence)
+	w.mu.Lock()
+	w.accountNumber = accountNumber
+	w.sequence = sequence
+	w.mu.Unlock()
 
 	w.logger.Debug("Refreshed account info",
 		zap.Uint64("account_number", accountNumber),

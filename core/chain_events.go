@@ -9,6 +9,7 @@ import (
 	"cygnus/atlas"
 	"cygnus/storage"
 
+	"github.com/cosmos/cosmos-sdk/types/query"
 	"go.uber.org/zap"
 )
 
@@ -31,26 +32,49 @@ func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64
 	r.storage.RecordChainSync(time.Now().UTC())
 	r.logger.Info("Proof round started", zap.Int64("height", height), zap.String("round", roundOrData))
 
-	request := &storageTypes.QueryChallengesRequest{
-		Provider: r.atlas.Wallet.GetAddress(),
-	}
-
-	var res *storageTypes.QueryChallengesResponse
-	var err error
-	for attempt := 0; attempt < 3; attempt++ {
-		res, err = r.atlas.QueryClients.Storage.Challenges(ctx, request)
-		if err == nil {
-			break
-		}
-		time.Sleep(time.Duration(attempt+1) * time.Second)
-	}
+	challenges, err := r.queryAllProviderChallenges(ctx)
 	if err != nil {
 		return err
 	}
 
-	r.scheduleChallengeProofs(ctx, height, roundOrData, res.Challenges)
+	r.scheduleChallengeProofs(ctx, height, roundOrData, challenges)
 
 	return nil
+}
+
+func (r *chainEventReceiver) queryAllProviderChallenges(ctx context.Context) ([]*storageTypes.StorageChallenge, error) {
+	provider := r.atlas.Wallet.GetAddress()
+	var challenges []*storageTypes.StorageChallenge
+	var nextKey []byte
+
+	for {
+		request := &storageTypes.QueryChallengesRequest{
+			Provider: provider,
+			Pagination: &query.PageRequest{
+				Key:   nextKey,
+				Limit: query.DefaultLimit,
+			},
+		}
+
+		var res *storageTypes.QueryChallengesResponse
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			res, err = r.atlas.QueryClients.Storage.Challenges(ctx, request)
+			if err == nil {
+				break
+			}
+			time.Sleep(time.Duration(attempt+1) * time.Second)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		challenges = append(challenges, res.Challenges...)
+		if res.Pagination == nil || len(res.Pagination.NextKey) == 0 {
+			return challenges, nil
+		}
+		nextKey = append(nextKey[:0], res.Pagination.NextKey...)
+	}
 }
 
 func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundStartHeight int64, round string, challenges []*storageTypes.StorageChallenge) {

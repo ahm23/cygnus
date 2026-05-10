@@ -63,7 +63,12 @@ func NewApp(home string) (*App, error) {
 	apiServer := api.NewAPI(&cfg.APICfg)
 	apiServer.SetupRoutes(cfg, logger, am, sm)
 
-	receiver := &chainEventReceiver{atlas: am, storage: sm, logger: logger}
+	receiver := &chainEventReceiver{
+		atlas:                 am,
+		storage:               sm,
+		logger:                logger,
+		pauseUploadsForProofs: cfg.APICfg.PauseUploadsForProofs,
+	}
 	eventListener, err := atlas.NewEventListener(cfg, logger, receiver)
 	if err != nil {
 		log.Warn().Err(err).Msg("Chain event listener not started (RPC may be unavailable)")

@@ -67,19 +67,21 @@ func DefaultStrayManagerConfig() StrayManagerConfig {
 }
 
 type APIConfig struct {
-	Port          int64 `yaml:"port" mapstructure:"port"`
-	OpenGateway   bool  `yaml:"open_gateway" mapstructure:"open_gateway"`
-	MaxUploadSize int64 `yaml:"max_upload_size" mapstructure:"max_upload_size"`
-	SyncUploads   bool  `yaml:"sync_uploads" mapstructure:"sync_uploads"`
+	Port                  int64 `yaml:"port" mapstructure:"port"`
+	OpenGateway           bool  `yaml:"open_gateway" mapstructure:"open_gateway"`
+	MaxUploadSize         int64 `yaml:"max_upload_size" mapstructure:"max_upload_size"`
+	SyncUploads           bool  `yaml:"sync_uploads" mapstructure:"sync_uploads"`
+	PauseUploadsForProofs bool  `yaml:"pause_uploads_for_proofs" mapstructure:"pause_uploads_for_proofs"`
 }
 
 // DefaultAPIConfig returns the default APIConfig with preset ports, IPFS domain, search enabled, and an open gateway.
 func DefaultAPIConfig() APIConfig {
 	return APIConfig{
-		Port:          3333,
-		OpenGateway:   true,
-		MaxUploadSize: 34359738368,
-		SyncUploads:   false,
+		Port:                  3333,
+		OpenGateway:           true,
+		MaxUploadSize:         34359738368,
+		SyncUploads:           false,
+		PauseUploadsForProofs: false,
 	}
 }
 
@@ -115,7 +117,8 @@ func (c Config) MarshalZerologObject(e *zerolog.Event) {
 		Int64("TotalSpace", c.TotalSpace).
 		Str("DataDirectory", c.DataDirectory).
 		Int64("APIPort", c.APICfg.Port).
-		Bool("APISyncUploads", c.APICfg.SyncUploads)
+		Bool("APISyncUploads", c.APICfg.SyncUploads).
+		Bool("APIPauseUploadsForProofs", c.APICfg.PauseUploadsForProofs)
 }
 
 func init() {

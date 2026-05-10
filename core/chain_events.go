@@ -24,12 +24,13 @@ const (
 
 // chainEventReceiver bridges atlas blockchain events to the storage manager.
 type chainEventReceiver struct {
-	atlas             *atlas.AtlasManager
-	storage           *storage.StorageManager
-	logger            *zap.Logger
-	latestBlockHeight atomic.Int64
-	proofRoundMu      sync.Mutex
-	proofRounds       map[int64]struct{}
+	atlas                 *atlas.AtlasManager
+	storage               *storage.StorageManager
+	logger                *zap.Logger
+	pauseUploadsForProofs bool
+	latestBlockHeight     atomic.Int64
+	proofRoundMu          sync.Mutex
+	proofRounds           map[int64]struct{}
 }
 
 var _ atlas.ChainEventReceiver = (*chainEventReceiver)(nil)
@@ -181,15 +182,18 @@ func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, ro
 
 	r.logger.Debug("Submitting challenge proofs",
 		zap.Int("count", len(challenges)),
-		zap.Int64("height", broadcastHeight+1))
+		zap.Int64("height", broadcastHeight+1),
+		zap.Bool("pause_uploads_for_proofs", r.pauseUploadsForProofs))
 
-	// pause upload handler and upload-related transactions to give priority to proofs
-	r.atlas.Wallet.PauseNormalTxs()
-	r.storage.PauseUploadProofs()
-	defer func() {
-		r.atlas.Wallet.ResumeNormalTxs()
-		r.storage.ResumeUploadProofs()
-	}()
+	if r.pauseUploadsForProofs {
+		// Pause upload-related transactions to give challenge proofs the whole wallet lane.
+		r.atlas.Wallet.PauseNormalTxs()
+		r.storage.PauseUploadProofs()
+		defer func() {
+			r.atlas.Wallet.ResumeNormalTxs()
+			r.storage.ResumeUploadProofs()
+		}()
+	}
 
 	for _, challenge := range challenges {
 		// soft-check that challenge has not expired

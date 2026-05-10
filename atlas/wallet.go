@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cosmos/cosmos-sdk/client"
@@ -43,13 +44,14 @@ type AtlasWallet struct {
 	gasPrices     string
 	gasAdjustment float64
 
-	txQueue         chan *walletTxRequest
-	highPriorityTxQ chan *walletTxRequest
-	txStopChan      chan struct{}
-	txWG            sync.WaitGroup
-	txStopOnce      sync.Once
-	txQueueMu       sync.RWMutex
-	txStopped       bool
+	txQueue          chan *walletTxRequest
+	highPriorityTxQ  chan *walletTxRequest
+	txStopChan       chan struct{}
+	txWG             sync.WaitGroup
+	txStopOnce       sync.Once
+	txQueueMu        sync.RWMutex
+	txStopped        bool
+	highPriorityMode atomic.Int64
 }
 
 type TxPriority int
@@ -220,6 +222,16 @@ func (w *AtlasWallet) Stop() {
 	})
 }
 
+func (w *AtlasWallet) BeginHighPriorityMode() {
+	w.highPriorityMode.Add(1)
+}
+
+func (w *AtlasWallet) EndHighPriorityMode() {
+	if w.highPriorityMode.Add(-1) < 0 {
+		w.highPriorityMode.Store(0)
+	}
+}
+
 func (w *AtlasWallet) processTxQueue() {
 	defer w.txWG.Done()
 
@@ -233,14 +245,25 @@ func (w *AtlasWallet) processTxQueue() {
 		default:
 		}
 
-		select {
-		case <-w.txStopChan:
-			w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
-			return
-		case req := <-w.highPriorityTxQ:
-			w.handleQueuedTx(req)
-		case req := <-w.txQueue:
-			w.handleQueuedTx(req)
+		if w.highPriorityMode.Load() > 0 {
+			select {
+			case <-w.txStopChan:
+				w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
+				return
+			case req := <-w.highPriorityTxQ:
+				w.handleQueuedTx(req)
+			case <-time.After(25 * time.Millisecond):
+			}
+		} else {
+			select {
+			case <-w.txStopChan:
+				w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
+				return
+			case req := <-w.highPriorityTxQ:
+				w.handleQueuedTx(req)
+			case req := <-w.txQueue:
+				w.handleQueuedTx(req)
+			}
 		}
 	}
 }

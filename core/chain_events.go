@@ -34,38 +34,26 @@ type chainEventReceiver struct {
 
 var _ atlas.ChainEventReceiver = (*chainEventReceiver)(nil)
 
-func (r *chainEventReceiver) OnNewBlock(ctx context.Context, height int64) error {
-	r.recordBlockHeight(height)
-	return nil
+// === OnNewBlock is an event handler for new block events
+func (r *chainEventReceiver) OnNewBlock(ctx context.Context, height int64) {
+	r.latestBlockHeight.Swap(height)
+	r.storage.RecordChainSync(time.Now().UTC())
 }
 
 func (r *chainEventReceiver) OnFileDeleted(ctx context.Context, fileID string) error {
 	return r.storage.DeleteFile(ctx, fileID)
 }
 
-func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64, roundOrData string) error {
-	r.recordBlockHeight(height)
-	if !r.claimProofRound(height) {
-		r.logger.Info("Skipping duplicate proof round",
-			zap.Int64("height", height),
-			zap.String("round", roundOrData))
-		return nil
-	}
-	r.storage.RecordChainSync(time.Now().UTC())
-	r.logger.Info("Proof round started", zap.Int64("height", height), zap.String("round", roundOrData))
-
-	queryStarted := time.Now()
+// === OnStartProofRound is an event handler for new proof round events
+func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64, round string) error {
+	r.logger.Info("Discovered new challenge round", zap.String("round", round))
 	challenges, err := r.queryAllProviderChallenges(ctx)
 	if err != nil {
 		return err
 	}
-	r.logger.Info("Fetched challenge proofs for round",
-		zap.Int64("round_start_height", height),
-		zap.String("round", roundOrData),
-		zap.Int("challenge_count", len(challenges)),
-		zap.Duration("query_duration", time.Since(queryStarted)))
+	r.logger.Info("Fetched challenge proofs for round", zap.Int("challenge_count", len(challenges)))
 
-	r.scheduleChallengeProofs(ctx, height, roundOrData, challenges)
+	r.scheduleChallengeProofs(ctx, height, round, challenges)
 
 	return nil
 }
@@ -113,20 +101,16 @@ func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundS
 		return
 	}
 
-	currentHeight := r.latestChainHeight(ctx, roundStartHeight)
+	currentHeight := r.atlas.State.Height
 	challenges, skippedOld, skippedFuture, skippedInvalid := r.filterCurrentRoundChallenges(challenges, currentHeight)
 	if skippedOld > 0 || skippedFuture > 0 || skippedInvalid > 0 {
 		r.logger.Info("Dropped stale challenge proofs before scheduling",
 			zap.Int64("current_height", currentHeight),
-			zap.Int64("active_round_start", currentChallengeRoundStart(currentHeight)),
-			zap.Int("skipped_old", skippedOld),
-			zap.Int("skipped_future", skippedFuture),
-			zap.Int("skipped_invalid", skippedInvalid),
 			zap.Int("remaining_challenges", len(challenges)))
 	}
 	if len(challenges) == 0 {
 		r.logger.Info("No current-round challenges to prove",
-			zap.Int64("height", roundStartHeight),
+			zap.Int64("round_height", roundStartHeight),
 			zap.String("round", round))
 		return
 	}
@@ -166,11 +150,9 @@ func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundS
 	}
 
 	r.logger.Info("Scheduled challenge proofs across upcoming blocks",
-		zap.Int64("round_start_height", roundStartHeight),
 		zap.Int64("current_height", currentHeight),
 		zap.Int64("first_target_height", firstTargetHeight),
 		zap.Int64("last_target_height", lastTargetHeight),
-		zap.String("round", round),
 		zap.Int("challenge_count", len(challenges)-skippedExpired),
 		zap.Int("block_count", len(batches)))
 
@@ -181,92 +163,55 @@ func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundS
 	}
 }
 
+// === proveChallengeBatchAtHeight waits for a given block height and submits proofs for a batch of challenges
 func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, round string, targetHeight int64, challenges []*storageTypes.StorageChallenge) {
 	broadcastHeight := targetHeight - 1
 	if broadcastHeight < 0 {
 		broadcastHeight = 0
 	}
 
-	if err := r.atlas.WaitForHeight(ctx, broadcastHeight); err != nil {
+	// wait for the desired height to submit a batch of proofs
+	if err := r.atlas.WaitForBlockHeight(ctx, broadcastHeight); err != nil {
 		r.logger.Error("Failed waiting to submit scheduled challenge proofs",
 			zap.String("round", round),
-			zap.Int64("target_height", targetHeight),
 			zap.Int64("broadcast_height", broadcastHeight),
-			zap.Int("challenge_count", len(challenges)),
 			zap.Error(err))
 		return
 	}
 
 	r.logger.Info("Submitting scheduled challenge proofs",
 		zap.String("round", round),
-		zap.Int64("target_height", targetHeight),
-		zap.Int64("broadcast_height", broadcastHeight),
-		zap.Int("challenge_count", len(challenges)))
+		zap.Int("challenge_count", len(challenges)),
+		zap.Int64("broadcast_height", broadcastHeight))
 
-	if latestHeight, err := r.atlas.LatestBlockHeight(ctx); err != nil {
-		r.logger.Warn("Failed to refresh latest block height before proving challenges",
-			zap.Int64("target_height", targetHeight),
-			zap.Error(err))
-	} else {
-		r.recordBlockHeight(latestHeight)
-	}
-
-	r.logger.Info("Pausing upload proof txs for challenge proof block",
-		zap.String("round", round),
-		zap.Int64("target_height", targetHeight),
-		zap.Int("challenge_count", len(challenges)))
+	// pause upload handler and upload-related transactions to give priority to proofs
 	r.atlas.Wallet.PauseNormalTxs()
 	r.storage.PauseUploadProofs()
 	defer func() {
-		r.storage.ResumeUploadProofs()
 		r.atlas.Wallet.ResumeNormalTxs()
-		r.logger.Info("Resumed upload proof txs after challenge proof block",
-			zap.String("round", round),
-			zap.Int64("target_height", targetHeight))
+		r.storage.ResumeUploadProofs()
 	}()
 
 	for _, challenge := range challenges {
-		currentHeight := r.currentBlockHeight(targetHeight)
+		// soft-check that challenge has not expired
+		currentHeight := r.latestBlockHeight.Load()
 		if !r.isChallengeCurrent(challenge, currentHeight) {
-			r.logger.Info("Dropping stale scheduled challenge proof",
+			// Dev Note: this only happens when the provider is under extreme loads (typically long-rolling DDoS)
+			r.logger.Info("Dropping stale challenge",
 				zap.Int64("current_height", currentHeight),
-				zap.Int64("active_round_start", currentChallengeRoundStart(currentHeight)),
-				zap.String("challenge_id", challenge.ChallengeId),
-				zap.Uint64("created_height", challenge.CreatedHeight),
-				zap.Int64("target_height", targetHeight))
+				zap.Int64("target_height", targetHeight),
+				zap.String("challenge_id", challenge.ChallengeId))
 			continue
 		}
 
-		r.storage.RecordChainSync(time.Now().UTC())
+		// prove file (respond to the challenge)
 		err := r.storage.ProveFile(ctx, challenge.FileId, challenge.ChallengeId, int64(challenge.ChunkIndex))
 		if err != nil {
 			r.logger.Error("Failed to prove challenge",
 				zap.String("file_id", challenge.FileId),
-				zap.String("challenge_id", challenge.ChallengeId),
 				zap.Int64("chunk", int64(challenge.ChunkIndex)),
-				zap.Int64("target_height", targetHeight),
 				zap.Error(err))
 			continue
-		}
-	}
-}
-
-func (r *chainEventReceiver) OnStartProofWindow(ctx context.Context, height int64, windowOrData string) error {
-	r.recordBlockHeight(height)
-	// [TBD]: this chain-sync is pretty useless. remove it?
-	r.storage.RecordChainSync(time.Now().UTC())
-	r.logger.Info("Proof window started", zap.Int64("height", height), zap.String("window", windowOrData))
-	return nil
-}
-
-func (r *chainEventReceiver) recordBlockHeight(height int64) {
-	for {
-		current := r.latestBlockHeight.Load()
-		if height <= current {
-			return
-		}
-		if r.latestBlockHeight.CompareAndSwap(current, height) {
-			return
 		}
 	}
 }
@@ -290,26 +235,6 @@ func (r *chainEventReceiver) claimProofRound(height int64) bool {
 	}
 
 	return true
-}
-
-func (r *chainEventReceiver) currentBlockHeight(fallback int64) int64 {
-	height := r.latestBlockHeight.Load()
-	if height > 0 {
-		return height
-	}
-	return fallback
-}
-
-func (r *chainEventReceiver) latestChainHeight(ctx context.Context, fallback int64) int64 {
-	latestHeight, err := r.atlas.LatestBlockHeight(ctx)
-	if err != nil {
-		r.logger.Warn("Failed to refresh latest block height",
-			zap.Int64("fallback_height", fallback),
-			zap.Error(err))
-		return r.currentBlockHeight(fallback)
-	}
-	r.recordBlockHeight(latestHeight)
-	return latestHeight
 }
 
 func (r *chainEventReceiver) filterCurrentRoundChallenges(challenges []*storageTypes.StorageChallenge, currentHeight int64) ([]*storageTypes.StorageChallenge, int, int, int) {

@@ -110,7 +110,8 @@ func (app *App) Start() error {
 			}
 		}()
 	}
-	go app.pollChallengeRounds(ctx)
+	go app.atlas.PollBlockHeight(ctx, app.blockEventHandler)
+	// go app.pollChallengeRounds(ctx)
 
 	done := make(chan os.Signal, 1)
 	defer signal.Stop(done)
@@ -132,55 +133,19 @@ func (app *App) Start() error {
 	return nil
 }
 
-func (app *App) pollChallengeRounds(ctx context.Context) {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+func (app *App) blockEventHandler(ctx context.Context, height int64) {
+	app.chainReceiver.OnNewBlock(ctx, height)
 
-	var lastSeenHeight int64
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
+	if height >= 0 || height%challengeRoundBlocks == 0 {
+		round := strconv.FormatInt(height/challengeRoundBlocks, 10)
+		app.log.Debug("Discovered new challenge round", zap.String("round", round))
 
-		latestHeight, err := app.atlas.LatestBlockHeight(ctx)
-		if err != nil {
-			app.log.Warn("Challenge round poll failed", zap.Error(err))
-			continue
-		}
-
-		if latestHeight <= lastSeenHeight {
-			continue
-		}
-		if lastSeenHeight == 0 {
-			lastSeenHeight = latestHeight - 1
-		}
-
-		if err := app.chainReceiver.OnNewBlock(ctx, latestHeight); err != nil {
-			app.log.Warn("Challenge round poll block update failed",
-				zap.Int64("height", latestHeight),
+		if err := app.chainReceiver.OnStartProofRound(ctx, height, round); err != nil {
+			app.log.Error("Challenge round poll handler failed",
+				zap.Int64("height", height),
+				zap.String("round", round),
 				zap.Error(err))
 		}
-
-		for height := lastSeenHeight + 1; height <= latestHeight; height++ {
-			if height <= 0 || height%challengeRoundBlocks != 0 {
-				continue
-			}
-
-			round := strconv.FormatInt(height/challengeRoundBlocks, 10)
-			app.log.Info("Challenge round detected by RPC poller",
-				zap.Int64("height", height),
-				zap.String("round", round))
-			if err := app.chainReceiver.OnStartProofRound(ctx, height, round); err != nil {
-				app.log.Error("Challenge round poll handler failed",
-					zap.Int64("height", height),
-					zap.String("round", round),
-					zap.Error(err))
-			}
-		}
-
-		lastSeenHeight = latestHeight
 	}
 }
 

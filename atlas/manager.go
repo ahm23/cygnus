@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
-	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/cosmos/cosmos-sdk/client"
 	cmtservice "github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"go.uber.org/zap"
@@ -35,6 +35,12 @@ type AtlasManager struct {
 
 	Wallet       *AtlasWallet
 	QueryClients types.QueryClients
+	State        AtlasState
+}
+
+type AtlasState struct {
+	mu     sync.Mutex
+	Height int64
 }
 
 // MsgClients groups all message clients
@@ -118,21 +124,40 @@ func (am *AtlasManager) ConnectWalletWithKeyNameAndSource(keyName, keySource str
 	return err
 }
 
-func (am *AtlasManager) WaitForHeight(ctx context.Context, targetHeight int64) error {
-	client, err := am.rpcClient()
-	if err != nil {
-		return err
-	}
+// === PollBlockHeight continously polls the block height at 2 second intervals
+func (am *AtlasManager) PollBlockHeight(ctx context.Context, callback func(context.Context, int64)) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
 
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		latestHeight, err := am.GetLatestBlockHeight(ctx)
+		if err != nil {
+			am.logger.Warn("Challenge round poll failed", zap.Error(err))
+			continue
+		}
+		if latestHeight <= am.State.Height {
+			continue
+		}
+
+		atomic.StoreInt64(&am.State.Height, latestHeight)
+		am.logger.Debug("Block Height:", zap.Int64("height", latestHeight))
+		callback(ctx, latestHeight)
+	}
+}
+
+// === WaitForBlockHeight waits for a given block height to be reached
+func (am *AtlasManager) WaitForBlockHeight(ctx context.Context, targetHeight int64) error {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
-		status, err := client.Status(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to get latest block height: %w", err)
-		}
-		if status.SyncInfo.LatestBlockHeight >= targetHeight {
+		if am.State.Height >= targetHeight {
 			return nil
 		}
 
@@ -144,20 +169,8 @@ func (am *AtlasManager) WaitForHeight(ctx context.Context, targetHeight int64) e
 	}
 }
 
-func (am *AtlasManager) LatestBlockHeight(ctx context.Context) (int64, error) {
-	if am.cmtClient != nil {
-		height, err := am.latestBlockHeightGRPC(ctx)
-		if err == nil {
-			return height, nil
-		}
-		am.logger.Warn("Failed to get latest block height via gRPC, falling back to RPC",
-			zap.Error(err))
-	}
-
-	return am.latestBlockHeightRPC(ctx)
-}
-
-func (am *AtlasManager) latestBlockHeightGRPC(ctx context.Context) (int64, error) {
+// === GetLatestBlockHeight gets the latest block height via gRPC
+func (am *AtlasManager) GetLatestBlockHeight(ctx context.Context) (int64, error) {
 	res, err := am.cmtClient.GetLatestBlock(ctx, &cmtservice.GetLatestBlockRequest{})
 	if err != nil {
 		return 0, fmt.Errorf("failed to get latest block height via gRPC: %w", err)
@@ -176,31 +189,6 @@ func (am *AtlasManager) latestBlockHeightGRPC(ctx context.Context) (int64, error
 	}
 
 	return 0, fmt.Errorf("latest block response did not include a block height")
-}
-
-func (am *AtlasManager) latestBlockHeightRPC(ctx context.Context) (int64, error) {
-	client, err := am.rpcClient()
-	if err != nil {
-		return 0, err
-	}
-	status, err := client.Status(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get latest block height: %w", err)
-	}
-	return status.SyncInfo.LatestBlockHeight, nil
-}
-
-func (am *AtlasManager) rpcClient() (*rpchttp.HTTP, error) {
-	rpcAddr := strings.TrimSuffix(am.cfg.ChainCfg.RPCAddr, "/")
-	if !strings.HasPrefix(rpcAddr, "http://") && !strings.HasPrefix(rpcAddr, "https://") {
-		rpcAddr = "http://" + rpcAddr
-	}
-
-	client, err := rpchttp.New(rpcAddr, "/websocket")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create RPC client: %w", err)
-	}
-	return client, nil
 }
 
 // Close closes the GRPC connection

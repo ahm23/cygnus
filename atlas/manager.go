@@ -9,6 +9,7 @@ import (
 
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/cosmos/cosmos-sdk/client"
+	cmtservice "github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"go.uber.org/zap"
 
 	storagetypes "atlas/x/storage/types"
@@ -30,6 +31,7 @@ type AtlasManager struct {
 	logger    *zap.Logger
 	clientCtx client.Context
 	grpcConn  *grpc.ClientConn
+	cmtClient cmtservice.ServiceClient
 
 	Wallet       *AtlasWallet
 	QueryClients types.QueryClients
@@ -88,6 +90,7 @@ func (am *AtlasManager) ConnectGRPC() error {
 	}
 
 	am.grpcConn = conn
+	am.cmtClient = cmtservice.NewServiceClient(conn)
 
 	am.clientCtx = am.clientCtx.WithGRPCClient(conn)
 
@@ -142,6 +145,40 @@ func (am *AtlasManager) WaitForHeight(ctx context.Context, targetHeight int64) e
 }
 
 func (am *AtlasManager) LatestBlockHeight(ctx context.Context) (int64, error) {
+	if am.cmtClient != nil {
+		height, err := am.latestBlockHeightGRPC(ctx)
+		if err == nil {
+			return height, nil
+		}
+		am.logger.Warn("Failed to get latest block height via gRPC, falling back to RPC",
+			zap.Error(err))
+	}
+
+	return am.latestBlockHeightRPC(ctx)
+}
+
+func (am *AtlasManager) latestBlockHeightGRPC(ctx context.Context) (int64, error) {
+	res, err := am.cmtClient.GetLatestBlock(ctx, &cmtservice.GetLatestBlockRequest{})
+	if err != nil {
+		return 0, fmt.Errorf("failed to get latest block height via gRPC: %w", err)
+	}
+	if sdkBlock := res.GetSdkBlock(); sdkBlock != nil {
+		height := sdkBlock.GetHeader().Height
+		if height > 0 {
+			return height, nil
+		}
+	}
+	if block := res.GetBlock(); block != nil {
+		height := block.GetHeader().Height
+		if height > 0 {
+			return height, nil
+		}
+	}
+
+	return 0, fmt.Errorf("latest block response did not include a block height")
+}
+
+func (am *AtlasManager) latestBlockHeightRPC(ctx context.Context) (int64, error) {
 	client, err := am.rpcClient()
 	if err != nil {
 		return 0, err

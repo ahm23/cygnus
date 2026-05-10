@@ -379,6 +379,20 @@ func (w *AtlasWallet) broadcastQueuedTx(req *walletTxRequest) {
 
 func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
 	accountNumber, sequence := w.accountInfo()
+	simSequence := sequence
+
+	chainAccountNumber, chainSequence, err := w.queryAccountInfo(ctx)
+	if err == nil {
+		accountNumber = chainAccountNumber
+		simSequence = chainSequence
+		if chainSequence > sequence {
+			sequence = chainSequence
+			w.setAccountInfo(chainAccountNumber, chainSequence)
+		}
+	} else {
+		w.logger.Warn("Failed to query committed account sequence before gas simulation",
+			zap.Error(err))
+	}
 
 	// Create transaction factory with proper settings
 	txf := tx.Factory{}.
@@ -390,7 +404,7 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 		WithGasPrices(w.gasPrices).
 		WithKeybase(w.clientCtx.Keyring).
 		WithAccountNumber(accountNumber).
-		WithSequence(sequence).
+		WithSequence(simSequence).
 		WithSignMode(signing.SignMode_SIGN_MODE_DIRECT).
 		WithSimulateAndExecute(true).
 		WithFromName(w.keyName)
@@ -410,7 +424,7 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 	// 	zap.String("gas_prices", w.gasPrices),
 	// 	zap.Uint64("sequence", sequence))
 
-	txf = txf.WithGas(adjusted)
+	txf = txf.WithGas(adjusted).WithSequence(sequence)
 
 	// build unsigned transaction
 	txb, err := txf.BuildUnsignedTx(msgs...)
@@ -525,10 +539,7 @@ func (w *AtlasWallet) refreshAccountInfo(ctx context.Context) error {
 		return err
 	}
 
-	w.mu.Lock()
-	w.accountNumber = accountNumber
-	w.sequence = sequence
-	w.mu.Unlock()
+	w.setAccountInfo(accountNumber, sequence)
 
 	w.logger.Debug("Refreshed account info",
 		zap.Uint64("account_number", accountNumber),
@@ -552,6 +563,16 @@ func (w *AtlasWallet) queryAccountInfo(ctx context.Context) (uint64, uint64, err
 	}
 
 	return acc.GetAccountNumber(), acc.GetSequence(), nil
+}
+
+func (w *AtlasWallet) setAccountInfo(accountNumber, sequence uint64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.accountNumber = accountNumber
+	if sequence > w.sequence {
+		w.sequence = sequence
+	}
 }
 
 func (w *AtlasWallet) accountInfo() (uint64, uint64) {

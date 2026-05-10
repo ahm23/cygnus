@@ -133,7 +133,7 @@ func (app *App) Start() error {
 }
 
 func (app *App) pollChallengeRounds(ctx context.Context) {
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	var lastSeenHeight int64

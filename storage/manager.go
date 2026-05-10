@@ -223,7 +223,6 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 		owner = sm.atlas.Wallet.GetAddress()
 	}
 
-	fmt.Println("INGEST SIZE:", ingest.Size)
 	metadata := &types.FileMetadata{
 		FID:         fileID,
 		FileName:    fileHeader.Filename,
@@ -256,11 +255,11 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 		return nil, fmt.Errorf("failed to post initial file proof: %w", err)
 	}
 
-	sm.logger.Info("File created successfully",
-		zap.String("file_id", fileID),
-		zap.Int64("size", metadata.Size),
-		zap.Int("chunks", metadata.Chunks),
-		zap.String("merkle_root", metadata.MerkleRoot))
+	// sm.logger.Info("File created successfully",
+	// 	zap.String("file_id", fileID),
+	// 	zap.Int64("size", metadata.Size),
+	// 	zap.Int("chunks", metadata.Chunks),
+	// 	zap.String("merkle_root", metadata.MerkleRoot))
 
 	return metadata, nil
 }

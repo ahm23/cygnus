@@ -206,11 +206,11 @@ func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, ro
 		zap.String("round", round),
 		zap.Int64("target_height", targetHeight),
 		zap.Int("challenge_count", len(challenges)))
-	r.storage.PauseUploadProofs()
 	r.atlas.Wallet.PauseNormalTxs()
+	r.storage.PauseUploadProofs()
 	defer func() {
-		r.atlas.Wallet.ResumeNormalTxs()
 		r.storage.ResumeUploadProofs()
+		r.atlas.Wallet.ResumeNormalTxs()
 		r.logger.Info("Resumed upload proof txs after challenge proof block",
 			zap.String("round", round),
 			zap.Int64("target_height", targetHeight))

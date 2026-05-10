@@ -344,16 +344,16 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 		return nil, fmt.Errorf("GRPC connection not established - cannot simulate gas")
 	}
 
-	simulatedGas, adjusted, err := tx.CalculateGas(w.clientCtx, txf, msgs...)
+	_, adjusted, err := tx.CalculateGas(w.clientCtx, txf, msgs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to simulate gas: %w", err)
 	}
 
-	w.logger.Debug("Gas simulation result",
-		zap.Uint64("simulated_gas", simulatedGas.GasInfo.GasWanted),
-		zap.Uint64("adjusted_gas", adjusted),
-		zap.String("gas_prices", w.gasPrices),
-		zap.Uint64("sequence", sequence))
+	// w.logger.Debug("Gas simulation result",
+	// 	zap.Uint64("simulated_gas", simulatedGas.GasInfo.GasWanted),
+	// 	zap.Uint64("adjusted_gas", adjusted),
+	// 	zap.String("gas_prices", w.gasPrices),
+	// 	zap.Uint64("sequence", sequence))
 
 	txf = txf.WithGas(adjusted)
 

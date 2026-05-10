@@ -210,7 +210,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 		_ = os.Remove(tempPath)
 		return nil, err
 	}
-	sm.logger.Info("Merkle tree created", zap.String("root_hash", hex.EncodeToString(tree.Root)))
+	// sm.logger.Info("Merkle tree created", zap.String("root_hash", hex.EncodeToString(tree.Root)))
 	// fmt.Println(tree)
 
 	if err := os.Rename(tempPath, filePath); err != nil {
@@ -343,11 +343,11 @@ func (sm *StorageManager) ProveFile(ctx context.Context, fileID string, challeng
 		return err
 	}
 
-	sm.logger.Info("Challenge proof submitted",
-		zap.String("file_id", fileID),
-		zap.String("challenge_id", challengeID),
-		zap.Int64("chunk", chunk),
-		zap.String("merkle_root", hex.EncodeToString(tree.Root)))
+	// sm.logger.Info("Challenge proof submitted",
+	// 	zap.String("file_id", fileID),
+	// 	zap.String("challenge_id", challengeID),
+	// 	zap.Int64("chunk", chunk),
+	// 	zap.String("merkle_root", hex.EncodeToString(tree.Root)))
 
 	return nil
 }

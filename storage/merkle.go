@@ -12,7 +12,6 @@ import (
 
 	merkletree "github.com/ahm23/go-merkletree-xxh"
 	"github.com/zeebo/blake3"
-	"go.uber.org/zap"
 )
 
 func hashChunk(chunk []byte) []byte {
@@ -48,7 +47,7 @@ func buildMerkleTreeFromLeaves(leaves [][]byte) (*merkletree.MerkleTree, error) 
 }
 
 func (sm *StorageManager) buildMerkleTreeFromReader(ctx context.Context, reader io.Reader) (*merkletree.MerkleTree, int, error) {
-	sm.logger.Info("Building Merkle tree from stream", zap.Int64("chunk_size", types.ChunkSize))
+	// sm.logger.Debug("Building Merkle tree from stream", zap.Int64("chunk_size", types.ChunkSize))
 
 	buf := make([]byte, types.ChunkSize)
 	var leaves [][]byte
@@ -71,9 +70,9 @@ func (sm *StorageManager) buildMerkleTreeFromReader(ctx context.Context, reader 
 		return nil, 0, err
 	}
 
-	sm.logger.Info("Merkle tree created",
-		zap.String("root_hash", hex.EncodeToString(tree.Root)),
-		zap.Int("total_chunks", len(leaves)))
+	// sm.logger.Info("Merkle tree created",
+	// 	zap.String("root_hash", hex.EncodeToString(tree.Root)),
+	// 	zap.Int("total_chunks", len(leaves)))
 
 	return tree, len(leaves), nil
 }

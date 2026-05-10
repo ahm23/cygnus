@@ -158,8 +158,14 @@ func (sm *StorageManager) submitProof(ctx context.Context, fileID, challengeID s
 		Chunk:       chunkIndex,
 	}
 
-	if _, err := sm.atlas.Wallet.BroadcastTxGrpc(0, false, msg); err != nil {
-		return err
+	if challengeID != "" {
+		if _, err := sm.atlas.Wallet.BroadcastTxGrpcHighPriority(0, false, msg); err != nil {
+			return err
+		}
+	} else {
+		if _, err := sm.atlas.Wallet.BroadcastTxGrpc(0, false, msg); err != nil {
+			return err
+		}
 	}
 
 	sm.recordProofActivity(time.Now().UTC())

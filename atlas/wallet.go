@@ -43,13 +43,21 @@ type AtlasWallet struct {
 	gasPrices     string
 	gasAdjustment float64
 
-	txQueue    chan *walletTxRequest
-	txStopChan chan struct{}
-	txWG       sync.WaitGroup
-	txStopOnce sync.Once
-	txQueueMu  sync.RWMutex
-	txStopped  bool
+	txQueue         chan *walletTxRequest
+	highPriorityTxQ chan *walletTxRequest
+	txStopChan      chan struct{}
+	txWG            sync.WaitGroup
+	txStopOnce      sync.Once
+	txQueueMu       sync.RWMutex
+	txStopped       bool
 }
+
+type TxPriority int
+
+const (
+	TxPriorityNormal TxPriority = iota
+	TxPriorityHigh
+)
 
 type walletTxRequest struct {
 	retries int
@@ -143,8 +151,9 @@ func NewAtlasWalletWithKeyNameAndSource(cfg *config.Config, logger *zap.Logger, 
 		gasPrices:     gasPrices,
 		gasAdjustment: gasAdjustment,
 
-		txQueue:    make(chan *walletTxRequest, walletTxQueueSize),
-		txStopChan: make(chan struct{}),
+		txQueue:         make(chan *walletTxRequest, walletTxQueueSize),
+		highPriorityTxQ: make(chan *walletTxRequest, walletTxQueueSize),
+		txStopChan:      make(chan struct{}),
 	}
 
 	if err := w.refreshAccountInfo(context.Background()); err != nil {
@@ -158,6 +167,14 @@ func NewAtlasWalletWithKeyNameAndSource(cfg *config.Config, logger *zap.Logger, 
 
 // BroadcastTx broadcasts a transaction
 func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
+	return w.BroadcastTxGrpcWithPriority(retries, wait, TxPriorityNormal, msgs...)
+}
+
+func (w *AtlasWallet) BroadcastTxGrpcHighPriority(retries int, wait bool, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
+	return w.BroadcastTxGrpcWithPriority(retries, wait, TxPriorityHigh, msgs...)
+}
+
+func (w *AtlasWallet) BroadcastTxGrpcWithPriority(retries int, wait bool, priority TxPriority, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
 	msgsCopy := append([]sdk.Msg(nil), msgs...)
 	req := &walletTxRequest{
 		retries: retries,
@@ -166,13 +183,18 @@ func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (
 		result:  make(chan walletTxResult, 1),
 	}
 
+	queue := w.txQueue
+	if priority == TxPriorityHigh {
+		queue = w.highPriorityTxQ
+	}
+
 	w.txQueueMu.RLock()
 	if w.txStopped {
 		w.txQueueMu.RUnlock()
 		return nil, fmt.Errorf("wallet transaction queue stopped")
 	}
 	select {
-	case w.txQueue <- req:
+	case queue <- req:
 		w.txQueueMu.RUnlock()
 	case <-w.txStopChan:
 		w.txQueueMu.RUnlock()
@@ -206,6 +228,17 @@ func (w *AtlasWallet) processTxQueue() {
 		case <-w.txStopChan:
 			w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
 			return
+		case req := <-w.highPriorityTxQ:
+			w.handleQueuedTx(req)
+		default:
+		}
+
+		select {
+		case <-w.txStopChan:
+			w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
+			return
+		case req := <-w.highPriorityTxQ:
+			w.handleQueuedTx(req)
 		case req := <-w.txQueue:
 			w.handleQueuedTx(req)
 		}
@@ -213,9 +246,14 @@ func (w *AtlasWallet) processTxQueue() {
 }
 
 func (w *AtlasWallet) failQueuedTxs(err error) {
+	w.failTxQueue(w.highPriorityTxQ, err)
+	w.failTxQueue(w.txQueue, err)
+}
+
+func (w *AtlasWallet) failTxQueue(queue chan *walletTxRequest, err error) {
 	for {
 		select {
-		case req := <-w.txQueue:
+		case req := <-queue:
 			req.result <- walletTxResult{err: err}
 		default:
 			return

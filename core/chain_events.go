@@ -87,10 +87,16 @@ func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundS
 }
 
 func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, round string, targetHeight int64, challenges []*storageTypes.StorageChallenge) {
-	if err := r.atlas.WaitForHeight(ctx, targetHeight); err != nil {
+	broadcastHeight := targetHeight - 1
+	if broadcastHeight < 0 {
+		broadcastHeight = 0
+	}
+
+	if err := r.atlas.WaitForHeight(ctx, broadcastHeight); err != nil {
 		r.logger.Error("Failed waiting to submit scheduled challenge proofs",
 			zap.String("round", round),
 			zap.Int64("target_height", targetHeight),
+			zap.Int64("broadcast_height", broadcastHeight),
 			zap.Int("challenge_count", len(challenges)),
 			zap.Error(err))
 		return
@@ -99,6 +105,7 @@ func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, ro
 	r.logger.Info("Submitting scheduled challenge proofs",
 		zap.String("round", round),
 		zap.Int64("target_height", targetHeight),
+		zap.Int64("broadcast_height", broadcastHeight),
 		zap.Int("challenge_count", len(challenges)))
 
 	for _, challenge := range challenges {

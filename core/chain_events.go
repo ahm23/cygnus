@@ -46,12 +46,12 @@ func (r *chainEventReceiver) OnFileDeleted(ctx context.Context, fileID string) e
 
 // === OnStartProofRound is an event handler for new proof round events
 func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64, round string) error {
-	r.logger.Info("Discovered new challenge round", zap.String("round", round))
+	r.logger.Debug("Started new challenge round", zap.String("round", round))
 	challenges, err := r.queryAllProviderChallenges(ctx)
 	if err != nil {
 		return err
 	}
-	r.logger.Info("Fetched challenge proofs for round", zap.Int("challenge_count", len(challenges)))
+	r.logger.Debug("Fetched challenges for round", zap.Int("challenge_count", len(challenges)))
 
 	r.scheduleChallengeProofs(ctx, height, round, challenges)
 
@@ -179,10 +179,9 @@ func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, ro
 		return
 	}
 
-	r.logger.Info("Submitting scheduled challenge proofs",
-		zap.String("round", round),
-		zap.Int("challenge_count", len(challenges)),
-		zap.Int64("broadcast_height", broadcastHeight))
+	r.logger.Info("Submitting challenge proofs",
+		zap.Int("count", len(challenges)),
+		zap.Int64("height", broadcastHeight+1))
 
 	// pause upload handler and upload-related transactions to give priority to proofs
 	r.atlas.Wallet.PauseNormalTxs()

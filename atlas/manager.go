@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -146,7 +147,7 @@ func (am *AtlasManager) PollBlockHeight(ctx context.Context, callback func(conte
 		}
 
 		atomic.StoreInt64(&am.State.Height, latestHeight)
-		am.logger.Debug("Block Height:", zap.Int64("height", latestHeight))
+		am.logger.Debug("Block Height " + strconv.FormatInt(latestHeight, 10))
 		callback(ctx, latestHeight)
 	}
 }

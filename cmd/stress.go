@@ -602,17 +602,12 @@ func defaultStressAPIURL(cfg *config.Config) string {
 		host = "localhost"
 	}
 	if strings.Contains(host, "://") {
-		parsed, err := url.Parse(host)
-		if err == nil && parsed.Port() == "" {
-			parsed.Host = fmt.Sprintf("%s:%d", parsed.Hostname(), cfg.APICfg.Port)
-			return strings.TrimRight(parsed.String(), "/")
-		}
 		return strings.TrimRight(host, "/")
 	}
 	if strings.Contains(host, ":") {
-		return "https://" + strings.TrimRight(host, "/")
+		return "http://" + strings.TrimRight(host, "/")
 	}
-	return fmt.Sprintf("https://%s:%d", host, cfg.APICfg.Port)
+	return fmt.Sprintf("http://%s:%d", host, cfg.APICfg.Port)
 }
 
 func normalizeStressUploadURL(raw string) (string, error) {
@@ -620,7 +615,7 @@ func normalizeStressUploadURL(raw string) (string, error) {
 		return "", fmt.Errorf("api URL cannot be empty")
 	}
 	if !strings.Contains(raw, "://") {
-		raw = "https://" + raw
+		raw = "http://" + raw
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {

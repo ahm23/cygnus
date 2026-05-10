@@ -186,6 +186,9 @@ func (w *AtlasWallet) BroadcastTxGrpcWithPriority(retries int, wait bool, priori
 	}
 
 	queue := w.txQueue
+	if priority == TxPriorityHigh {
+		queue = w.highPriorityTxQ
+	}
 
 	w.txQueueMu.RLock()
 	if w.txStopped {

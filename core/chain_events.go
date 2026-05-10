@@ -179,7 +179,7 @@ func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, ro
 		return
 	}
 
-	r.logger.Info("Submitting challenge proofs",
+	r.logger.Debug("Submitting challenge proofs",
 		zap.Int("count", len(challenges)),
 		zap.Int64("height", broadcastHeight+1))
 

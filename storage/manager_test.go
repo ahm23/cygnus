@@ -33,13 +33,24 @@ func newTestStorageManager(t *testing.T, totalSpace int64) *StorageManager {
 	return sm
 }
 
-func TestHasCapacityForIgnoresPebbleIndexFiles(t *testing.T) {
-	sm := newTestStorageManager(t, 10)
+func TestInitialUsageIgnoresPebbleIndexFiles(t *testing.T) {
+	dataDir := t.TempDir()
 
-	filePath := filepath.Join(sm.config.DataDirectory, "payload.bin")
+	filePath := filepath.Join(dataDir, "payload.bin")
 	if err := os.WriteFile(filePath, []byte("12345"), 0o644); err != nil {
 		t.Fatalf("failed to write payload file: %v", err)
 	}
+
+	sm, err := NewStorageManager(&config.Config{
+		DataDirectory: dataDir,
+		TotalSpace:    10,
+	}, zap.NewNop(), nil)
+	if err != nil {
+		t.Fatalf("NewStorageManager returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = sm.Close()
+	})
 
 	ok, used, err := sm.HasCapacityFor(context.Background(), 5)
 	if err != nil {
@@ -50,6 +61,21 @@ func TestHasCapacityForIgnoresPebbleIndexFiles(t *testing.T) {
 	}
 	if used != 5 {
 		t.Fatalf("unexpected used bytes: got %d want 5", used)
+	}
+}
+
+func TestReserveCapacityPreventsConcurrentOvercommit(t *testing.T) {
+	sm := newTestStorageManager(t, 10)
+
+	if ok, _ := sm.reserveCapacity(7); !ok {
+		t.Fatalf("expected first reservation to succeed")
+	}
+	if ok, used := sm.reserveCapacity(4); ok {
+		t.Fatalf("expected second reservation to fail, used=%d", used)
+	}
+	sm.releaseReservedCapacity(7)
+	if ok, used := sm.reserveCapacity(4); !ok {
+		t.Fatalf("expected reservation after release to succeed, used=%d", used)
 	}
 }
 

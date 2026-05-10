@@ -26,7 +26,6 @@ func (a *API) SetupRoutes(cfg *config.Config, logger *zap.Logger, atlas *atlas.A
 
 	api.Get("/download/:id", handler.DownloadFile)
 	api.Post("/upload",
-		middleware.ValidateSufficientStorage,
 		middleware.ValidateStagedFileExists,
 		handler.UploadFile)
 }

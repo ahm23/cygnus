@@ -15,7 +15,7 @@ type ingestResult struct {
 	Chunks     int
 }
 
-func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string) (*ingestResult, error) {
+func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string, syncToDisk bool) (*ingestResult, error) {
 	dest, err := os.Create(destinationPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
@@ -59,8 +59,10 @@ func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string) (*i
 		return nil, cleanup(fmt.Errorf("empty files are not supported"))
 	}
 
-	if err := dest.Sync(); err != nil {
-		return nil, cleanup(fmt.Errorf("failed to sync upload stream: %w", err))
+	if syncToDisk {
+		if err := dest.Sync(); err != nil {
+			return nil, cleanup(fmt.Errorf("failed to sync upload stream: %w", err))
+		}
 	}
 	if err := dest.Close(); err != nil {
 		_ = os.Remove(destinationPath)

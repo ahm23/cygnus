@@ -16,7 +16,7 @@ func TestStreamFileToDiskAndCollectLeaves(t *testing.T) {
 	destination := filepath.Join(tempDir, "file.bin")
 	payload := bytes.Repeat([]byte("a"), int(types.ChunkSize)+17)
 
-	result, err := streamFileToDiskAndCollectLeaves(bytes.NewReader(payload), destination)
+	result, err := streamFileToDiskAndCollectLeaves(bytes.NewReader(payload), destination, false)
 	if err != nil {
 		t.Fatalf("streamFileToDiskAndCollectLeaves returned error: %v", err)
 	}

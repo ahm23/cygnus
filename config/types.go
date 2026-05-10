@@ -70,6 +70,7 @@ type APIConfig struct {
 	Port          int64 `yaml:"port" mapstructure:"port"`
 	OpenGateway   bool  `yaml:"open_gateway" mapstructure:"open_gateway"`
 	MaxUploadSize int64 `yaml:"max_upload_size" mapstructure:"max_upload_size"`
+	SyncUploads   bool  `yaml:"sync_uploads" mapstructure:"sync_uploads"`
 }
 
 // DefaultAPIConfig returns the default APIConfig with preset ports, IPFS domain, search enabled, and an open gateway.
@@ -78,6 +79,7 @@ func DefaultAPIConfig() APIConfig {
 		Port:          3333,
 		OpenGateway:   true,
 		MaxUploadSize: 34359738368,
+		SyncUploads:   false,
 	}
 }
 
@@ -112,7 +114,8 @@ func (c Config) MarshalZerologObject(e *zerolog.Event) {
 		Str("IP", c.Ip).
 		Int64("TotalSpace", c.TotalSpace).
 		Str("DataDirectory", c.DataDirectory).
-		Int64("APIPort", c.APICfg.Port)
+		Int64("APIPort", c.APICfg.Port).
+		Bool("APISyncUploads", c.APICfg.SyncUploads)
 }
 
 func init() {

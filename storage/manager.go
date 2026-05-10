@@ -32,6 +32,9 @@ type StorageManager struct {
 	mu        sync.RWMutex
 	activeOps map[string]*sync.Mutex
 	fileLocks sync.Map
+	usageMu   sync.Mutex
+	usedBytes int64
+	fileCount int64
 
 	statusMu      sync.RWMutex
 	lastProofAt   time.Time
@@ -54,13 +57,23 @@ func NewStorageManager(cfg *config.Config, logger *zap.Logger, atlas *atlas.Atla
 
 	cfg.DataDirectory = dataDir
 
-	return &StorageManager{
+	sm := &StorageManager{
 		config:    cfg,
 		logger:    logger,
 		atlas:     atlas,
 		db:        db,
 		activeOps: make(map[string]*sync.Mutex),
-	}, nil
+	}
+
+	usedBytes, fileCount, err := sm.scanCurrentUsage(context.Background())
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to calculate storage usage: %w", err)
+	}
+	sm.usedBytes = usedBytes
+	sm.fileCount = fileCount
+
+	return sm, nil
 }
 
 func validateFileID(fileID string) error {
@@ -80,7 +93,7 @@ func (sm *StorageManager) GetFilePath(fileID string) (string, error) {
 	return filepath.Join(sm.config.DataDirectory, fileID), nil
 }
 
-func (sm *StorageManager) currentUsage(ctx context.Context) (int64, int64, error) {
+func (sm *StorageManager) scanCurrentUsage(ctx context.Context) (int64, int64, error) {
 	var totalSize int64
 	var fileCount int64
 
@@ -119,13 +132,93 @@ func (sm *StorageManager) currentUsage(ctx context.Context) (int64, int64, error
 	return totalSize, fileCount, nil
 }
 
-func (sm *StorageManager) HasCapacityFor(ctx context.Context, incomingSize int64) (bool, int64, error) {
-	used, _, err := sm.currentUsage(ctx)
-	if err != nil {
-		return false, 0, err
+func (sm *StorageManager) currentUsage(ctx context.Context) (int64, int64, error) {
+	sm.usageMu.Lock()
+	defer sm.usageMu.Unlock()
+
+	return sm.usedBytes, sm.fileCount, nil
+}
+
+func (sm *StorageManager) reserveCapacity(incomingSize int64) (bool, int64) {
+	if incomingSize < 0 {
+		incomingSize = 0
 	}
 
-	return used+incomingSize <= sm.config.TotalSpace, used, nil
+	sm.usageMu.Lock()
+	defer sm.usageMu.Unlock()
+
+	used := sm.usedBytes
+	if used+incomingSize > sm.config.TotalSpace {
+		return false, used
+	}
+	sm.usedBytes += incomingSize
+	return true, used
+}
+
+func (sm *StorageManager) releaseReservedCapacity(size int64) {
+	if size <= 0 {
+		return
+	}
+
+	sm.usageMu.Lock()
+	defer sm.usageMu.Unlock()
+
+	sm.usedBytes -= size
+	if sm.usedBytes < 0 {
+		sm.usedBytes = 0
+	}
+}
+
+func (sm *StorageManager) resizeReservedCapacity(currentReserved, actualSize int64) (int64, bool) {
+	if actualSize < 0 {
+		actualSize = 0
+	}
+	if actualSize == currentReserved {
+		return currentReserved, true
+	}
+	if actualSize < currentReserved {
+		sm.releaseReservedCapacity(currentReserved - actualSize)
+		return actualSize, true
+	}
+
+	extra := actualSize - currentReserved
+	if ok, _ := sm.reserveCapacity(extra); !ok {
+		return currentReserved, false
+	}
+	return actualSize, true
+}
+
+func (sm *StorageManager) commitReservedFile() {
+	sm.usageMu.Lock()
+	defer sm.usageMu.Unlock()
+
+	sm.fileCount++
+}
+
+func (sm *StorageManager) recordDeletedFile(size int64) {
+	sm.usageMu.Lock()
+	defer sm.usageMu.Unlock()
+
+	if size > 0 {
+		sm.usedBytes -= size
+		if sm.usedBytes < 0 {
+			sm.usedBytes = 0
+		}
+	}
+	if sm.fileCount > 0 {
+		sm.fileCount--
+	}
+}
+
+func (sm *StorageManager) HasCapacityFor(ctx context.Context, incomingSize int64) (bool, int64, error) {
+	if incomingSize < 0 {
+		incomingSize = 0
+	}
+
+	sm.usageMu.Lock()
+	defer sm.usageMu.Unlock()
+
+	return sm.usedBytes+incomingSize <= sm.config.TotalSpace, sm.usedBytes, nil
 }
 
 func (sm *StorageManager) RecordChainSync(at time.Time) {
@@ -216,11 +309,19 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 		return nil, err
 	}
 
-	if ok, _, err := sm.HasCapacityFor(ctx, fileHeader.Size); err != nil {
-		return nil, err
-	} else if !ok {
+	reservedSize := fileHeader.Size
+	if reservedSize < 0 {
+		reservedSize = 0
+	}
+	if ok, _ := sm.reserveCapacity(reservedSize); !ok {
 		return nil, fmt.Errorf("insufficient provider capacity")
 	}
+	committedReservation := false
+	defer func() {
+		if !committedReservation {
+			sm.releaseReservedCapacity(reservedSize)
+		}
+	}()
 
 	filePath, err := sm.GetFilePath(fileID)
 	if err != nil {
@@ -238,9 +339,15 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 	defer file.Close()
 
 	tempPath := filePath + ".upload-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	ingest, err := streamFileToDiskAndCollectLeaves(file, tempPath)
+	ingest, err := streamFileToDiskAndCollectLeaves(file, tempPath, sm.config.APICfg.SyncUploads)
 	if err != nil {
 		return nil, err
+	}
+	if nextReservedSize, ok := sm.resizeReservedCapacity(reservedSize, ingest.Size); !ok {
+		_ = os.Remove(tempPath)
+		return nil, fmt.Errorf("insufficient provider capacity")
+	} else {
+		reservedSize = nextReservedSize
 	}
 
 	tree, err := buildMerkleTreeFromLeaves(ingest.Leaves)
@@ -278,20 +385,23 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 	}
 
 	if err := sm.cacheMerkleTree(ctx, fileID, tree, ingest.Size, ingest.Chunks); err != nil {
-		_ = sm.DeleteFile(ctx, fileID)
+		sm.cleanupCreatedFile(ctx, fileID, filePath)
 		return nil, fmt.Errorf("failed to save merkle metadata: %w", err)
 	}
 
 	proof, err := sm.generateProof(tree, 0)
 	if err != nil {
-		_ = sm.DeleteFile(ctx, fileID)
+		sm.cleanupCreatedFile(ctx, fileID, filePath)
 		return nil, fmt.Errorf("failed to generate initial proof: %w", err)
 	}
 
 	if err := sm.submitProof(ctx, fileID, "", proof, 0, ingest.FirstChunk); err != nil {
-		_ = sm.DeleteFile(ctx, fileID)
+		sm.cleanupCreatedFile(ctx, fileID, filePath)
 		return nil, fmt.Errorf("failed to post initial file proof: %w", err)
 	}
+
+	sm.commitReservedFile()
+	committedReservation = true
 
 	// sm.logger.Info("File created successfully",
 	// 	zap.String("file_id", fileID),
@@ -332,19 +442,18 @@ func (sm *StorageManager) DeleteFile(ctx context.Context, fileID string) error {
 		return err
 	}
 
-	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-		sm.logger.Error("Failed to delete file", zap.String("file_id", fileID), zap.Error(err))
+	size := int64(0)
+	if metadata, metadataErr := sm.GetFileMetadata(ctx, fileID); metadataErr == nil && metadata != nil {
+		size = metadata.Size
+	} else if stat, statErr := os.Stat(filePath); statErr == nil {
+		size = stat.Size()
 	}
 
-	fileKey := FileKey(fileID)
-	if err := sm.db.Delete(ctx, fileKey); err != nil {
-		return fmt.Errorf("failed to delete metadata: %w", err)
+	if err := sm.deleteFileData(ctx, fileID, filePath); err != nil {
+		return err
 	}
 
-	merkleKey := MerkleKey(fileID)
-	if err := sm.db.Delete(ctx, merkleKey); err != nil {
-		sm.logger.Warn("Failed to delete merkle tree data", zap.String("file_id", fileID), zap.Error(err))
-	}
+	sm.recordDeletedFile(size)
 
 	sm.logger.Info("File deleted", zap.String("file_id", fileID))
 	return nil
@@ -533,6 +642,32 @@ func (sm *StorageManager) GetStatus() (*types.ProviderStatus, error) {
 		Peers:        peers,
 		Version:      config.Version(),
 	}, nil
+}
+
+func (sm *StorageManager) cleanupCreatedFile(ctx context.Context, fileID, filePath string) {
+	if err := sm.deleteFileData(ctx, fileID, filePath); err != nil {
+		sm.logger.Warn("Failed to clean up incomplete upload",
+			zap.String("file_id", fileID),
+			zap.Error(err))
+	}
+}
+
+func (sm *StorageManager) deleteFileData(ctx context.Context, fileID, filePath string) error {
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+		sm.logger.Error("Failed to delete file", zap.String("file_id", fileID), zap.Error(err))
+	}
+
+	fileKey := FileKey(fileID)
+	if err := sm.db.Delete(ctx, fileKey); err != nil {
+		return fmt.Errorf("failed to delete metadata: %w", err)
+	}
+
+	merkleKey := MerkleKey(fileID)
+	if err := sm.db.Delete(ctx, merkleKey); err != nil {
+		sm.logger.Warn("Failed to delete merkle tree data", zap.String("file_id", fileID), zap.Error(err))
+	}
+
+	return nil
 }
 
 func (sm *StorageManager) storeMetadata(ctx context.Context, metadata *types.FileMetadata) error {

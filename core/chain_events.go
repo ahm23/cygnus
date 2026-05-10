@@ -4,7 +4,6 @@ import (
 	"context"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,8 +27,6 @@ type chainEventReceiver struct {
 	storage           *storage.StorageManager
 	logger            *zap.Logger
 	latestBlockHeight atomic.Int64
-	proofRoundMu      sync.Mutex
-	proofRounds       map[int64]struct{}
 }
 
 var _ atlas.ChainEventReceiver = (*chainEventReceiver)(nil)
@@ -45,12 +42,6 @@ func (r *chainEventReceiver) OnFileDeleted(ctx context.Context, fileID string) e
 
 func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64, roundOrData string) error {
 	r.recordBlockHeight(height)
-	if !r.claimProofRound(height) {
-		r.logger.Info("Skipping duplicate proof round",
-			zap.Int64("height", height),
-			zap.String("round", roundOrData))
-		return nil
-	}
 	r.storage.RecordChainSync(time.Now().UTC())
 	r.logger.Info("Proof round started", zap.Int64("height", height), zap.String("round", roundOrData))
 
@@ -269,27 +260,6 @@ func (r *chainEventReceiver) recordBlockHeight(height int64) {
 			return
 		}
 	}
-}
-
-func (r *chainEventReceiver) claimProofRound(height int64) bool {
-	r.proofRoundMu.Lock()
-	defer r.proofRoundMu.Unlock()
-
-	if r.proofRounds == nil {
-		r.proofRounds = make(map[int64]struct{})
-	}
-	if _, ok := r.proofRounds[height]; ok {
-		return false
-	}
-	r.proofRounds[height] = struct{}{}
-
-	for roundHeight := range r.proofRounds {
-		if roundHeight < height-(challengeRoundBlocks*3) {
-			delete(r.proofRounds, roundHeight)
-		}
-	}
-
-	return true
 }
 
 func (r *chainEventReceiver) currentBlockHeight(fallback int64) int64 {

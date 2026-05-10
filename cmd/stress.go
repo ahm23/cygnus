@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,6 +47,73 @@ type stressFile struct {
 	merkleRoot []byte
 }
 
+type stressRunMetrics struct {
+	StartedAt       string               `json:"started_at"`
+	FinishedAt      string               `json:"finished_at"`
+	DurationMS      int64                `json:"duration_ms"`
+	Success         bool                 `json:"success"`
+	Error           string               `json:"error,omitempty"`
+	FileCount       int                  `json:"file_count"`
+	FileSizeBytes   int64                `json:"file_size_bytes"`
+	UploadURL       string               `json:"upload_url"`
+	PostBatchSize   int                  `json:"post_batch_size"`
+	UploadBatchSize int                  `json:"upload_batch_size"`
+	Replicas        int32                `json:"replicas"`
+	Subscription    string               `json:"subscription,omitempty"`
+	TempDir         string               `json:"temp_dir"`
+	KeyName         string               `json:"key_name"`
+	KeySource       string               `json:"key_source,omitempty"`
+	Phases          stressPhaseMetrics   `json:"phases"`
+	Upload          *stressUploadMetrics `json:"upload,omitempty"`
+}
+
+type stressPhaseMetrics struct {
+	CreateFiles stressTimedPhase `json:"create_files"`
+	PostFiles   stressTimedPhase `json:"post_files"`
+	UploadFiles stressTimedPhase `json:"upload_files"`
+}
+
+type stressTimedPhase struct {
+	StartedAt  string `json:"started_at,omitempty"`
+	FinishedAt string `json:"finished_at,omitempty"`
+	DurationMS int64  `json:"duration_ms,omitempty"`
+}
+
+type stressUploadMetrics struct {
+	StartedAt         string                     `json:"started_at"`
+	FinishedAt        string                     `json:"finished_at"`
+	DurationMS        int64                      `json:"duration_ms"`
+	Total             int                        `json:"total"`
+	Uploaded          int                        `json:"uploaded"`
+	Failed            int                        `json:"failed"`
+	BatchSize         int                        `json:"batch_size"`
+	UploadsPerSecond  float64                    `json:"uploads_per_second"`
+	FirstCompletionMS int64                      `json:"first_completion_ms,omitempty"`
+	LatencyMS         stressLatencyMetrics       `json:"latency_ms"`
+	Batches           []stressUploadBatchMetrics `json:"batches"`
+	ErrorSample       []string                   `json:"error_sample,omitempty"`
+}
+
+type stressUploadBatchMetrics struct {
+	StartIndex       int     `json:"start_index"`
+	EndIndex         int     `json:"end_index"`
+	Count            int     `json:"count"`
+	Uploaded         int     `json:"uploaded"`
+	Failed           int     `json:"failed"`
+	StartedAt        string  `json:"started_at"`
+	FinishedAt       string  `json:"finished_at"`
+	DurationMS       int64   `json:"duration_ms"`
+	UploadsPerSecond float64 `json:"uploads_per_second"`
+}
+
+type stressLatencyMetrics struct {
+	Min int64 `json:"min"`
+	P50 int64 `json:"p50"`
+	P95 int64 `json:"p95"`
+	P99 int64 `json:"p99"`
+	Max int64 `json:"max"`
+}
+
 func StressTestCmd() *cobra.Command {
 	var fileCount int
 	var fileSizeRaw string
@@ -57,11 +126,38 @@ func StressTestCmd() *cobra.Command {
 	var keepFiles bool
 	var keyName string
 	var keySource string
+	var metricsFile string
 
 	cmd := &cobra.Command{
 		Use:   "stress-test",
 		Short: "Stage and upload many generated files against this provider",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
+			runStartedAt := time.Now()
+			metrics := &stressRunMetrics{
+				StartedAt: runStartedAt.UTC().Format(time.RFC3339Nano),
+			}
+			defer func() {
+				runFinishedAt := time.Now()
+				metrics.FinishedAt = runFinishedAt.UTC().Format(time.RFC3339Nano)
+				metrics.DurationMS = durationMillis(runFinishedAt.Sub(runStartedAt))
+				metrics.Success = runErr == nil
+				if runErr != nil {
+					metrics.Error = runErr.Error()
+				}
+				if metricsFile == "" {
+					return
+				}
+				if err := writeStressMetrics(metricsFile, metrics); err != nil {
+					if runErr == nil {
+						runErr = err
+					} else {
+						fmt.Printf("\nfailed to write stress metrics: %v\n", err)
+					}
+					return
+				}
+				fmt.Printf("\nStress metrics written to %s\n", metricsFile)
+			}()
+
 			if fileCount < 1 {
 				return fmt.Errorf("--files must be at least 1")
 			}
@@ -79,6 +175,14 @@ func StressTestCmd() *cobra.Command {
 				return fmt.Errorf("--upload-batch-size must be at least 1")
 			}
 			normalizedKeySource := normalizeStressKeySource(keySource)
+			metrics.FileCount = fileCount
+			metrics.FileSizeBytes = fileSize
+			metrics.PostBatchSize = postBatchSize
+			metrics.UploadBatchSize = uploadBatchSize
+			metrics.Replicas = replicas
+			metrics.Subscription = subscription
+			metrics.KeyName = keyName
+			metrics.KeySource = normalizedKeySource
 
 			home, err := cmd.Flags().GetString(FlagHome)
 			if err != nil {
@@ -103,6 +207,7 @@ func StressTestCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			metrics.UploadURL = uploadURL
 
 			workDir := tempDir
 			if workDir == "" {
@@ -116,6 +221,7 @@ func StressTestCmd() *cobra.Command {
 			if !keepFiles {
 				defer os.RemoveAll(workDir)
 			}
+			metrics.TempDir = workDir
 
 			fmt.Printf("Stress test starting\n")
 			fmt.Printf("  files:          %d\n", fileCount)
@@ -129,7 +235,9 @@ func StressTestCmd() *cobra.Command {
 				fmt.Printf("  key source:     %s\n", normalizedKeySource)
 			}
 
+			createStartedAt := time.Now()
 			files, err := createStressFiles(workDir, cfg.ProviderName, fileCount, fileSize)
+			metrics.Phases.CreateFiles = newStressTimedPhase(createStartedAt, time.Now())
 			if err != nil {
 				return err
 			}
@@ -148,11 +256,18 @@ func StressTestCmd() *cobra.Command {
 				return err
 			}
 
+			postStartedAt := time.Now()
 			if err := postStressFiles(context.Background(), am, files, postBatchSize, replicas, subscription); err != nil {
+				metrics.Phases.PostFiles = newStressTimedPhase(postStartedAt, time.Now())
 				return err
 			}
+			metrics.Phases.PostFiles = newStressTimedPhase(postStartedAt, time.Now())
 
-			return uploadStressFiles(context.Background(), uploadURL, files, uploadBatchSize)
+			uploadStartedAt := time.Now()
+			uploadMetrics, err := uploadStressFiles(context.Background(), uploadURL, files, uploadBatchSize)
+			metrics.Phases.UploadFiles = newStressTimedPhase(uploadStartedAt, time.Now())
+			metrics.Upload = uploadMetrics
+			return err
 		},
 	}
 
@@ -167,6 +282,7 @@ func StressTestCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&keepFiles, "keep-files", false, "keep generated files after the command exits")
 	cmd.Flags().StringVar(&keyName, "key-name", "cygnus", "keyring key name to use for MsgPostFile transactions")
 	cmd.Flags().StringVar(&keySource, "key-source", "", "keyring home/root directory, or a keyring-test/keyring-file directory; default uses --home")
+	cmd.Flags().StringVar(&metricsFile, "metrics-file", "", "write stress test metrics to a JSON file")
 	_ = cmd.MarkFlagRequired("files")
 	_ = cmd.MarkFlagRequired("size")
 
@@ -316,14 +432,24 @@ func postStressFiles(ctx context.Context, am *atlas.AtlasManager, files []stress
 	return nil
 }
 
-func uploadStressFiles(ctx context.Context, uploadURL string, files []stressFile, batchSize int) error {
+func uploadStressFiles(ctx context.Context, uploadURL string, files []stressFile, batchSize int) (*stressUploadMetrics, error) {
 	fmt.Printf("\nUploading files to provider API...\n")
 	client := &http.Client{Timeout: 30 * time.Minute}
+	startedAt := time.Now()
+	metrics := &stressUploadMetrics{
+		StartedAt: startedAt.UTC().Format(time.RFC3339Nano),
+		Total:     len(files),
+		BatchSize: batchSize,
+	}
 
 	var uploaded atomic.Int64
 	var failed atomic.Int64
+	var firstCompletion atomic.Int64
+	var firstCompletionOnce sync.Once
 	var allErrs []error
 	var errMu sync.Mutex
+	var latencies []time.Duration
+	var latencyMu sync.Mutex
 	var printMu sync.Mutex
 
 	for start := 0; start < len(files); start += batchSize {
@@ -333,6 +459,9 @@ func uploadStressFiles(ctx context.Context, uploadURL string, files []stressFile
 		}
 
 		fmt.Printf("Starting upload batch %d-%d of %d\n", start+1, end, len(files))
+		batchStartedAt := time.Now()
+		batchUploadedBefore := uploaded.Load()
+		batchFailedBefore := failed.Load()
 
 		var wg sync.WaitGroup
 		for _, file := range files[start:end] {
@@ -340,7 +469,14 @@ func uploadStressFiles(ctx context.Context, uploadURL string, files []stressFile
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				uploadStartedAt := time.Now()
 				if err := uploadStressFile(ctx, client, uploadURL, file); err != nil {
+					latencyMu.Lock()
+					latencies = append(latencies, time.Since(uploadStartedAt))
+					latencyMu.Unlock()
+					firstCompletionOnce.Do(func() {
+						firstCompletion.Store(time.Now().UnixNano())
+					})
 					nextFailed := failed.Add(1)
 					errMu.Lock()
 					allErrs = append(allErrs, fmt.Errorf("%s: %w", file.id, err))
@@ -350,6 +486,12 @@ func uploadStressFiles(ctx context.Context, uploadURL string, files []stressFile
 					printMu.Unlock()
 					return
 				}
+				latencyMu.Lock()
+				latencies = append(latencies, time.Since(uploadStartedAt))
+				latencyMu.Unlock()
+				firstCompletionOnce.Do(func() {
+					firstCompletion.Store(time.Now().UnixNano())
+				})
 				nextUploaded := uploaded.Add(1)
 				printMu.Lock()
 				printStressProgress("uploaded", int(nextUploaded+failed.Load()), len(files), file.id)
@@ -357,19 +499,48 @@ func uploadStressFiles(ctx context.Context, uploadURL string, files []stressFile
 			}()
 		}
 		wg.Wait()
+		batchFinishedAt := time.Now()
+		batchUploaded := int(uploaded.Load() - batchUploadedBefore)
+		batchFailed := int(failed.Load() - batchFailedBefore)
+		batchDuration := batchFinishedAt.Sub(batchStartedAt)
+		metrics.Batches = append(metrics.Batches, stressUploadBatchMetrics{
+			StartIndex:       start + 1,
+			EndIndex:         end,
+			Count:            end - start,
+			Uploaded:         batchUploaded,
+			Failed:           batchFailed,
+			StartedAt:        batchStartedAt.UTC().Format(time.RFC3339Nano),
+			FinishedAt:       batchFinishedAt.UTC().Format(time.RFC3339Nano),
+			DurationMS:       durationMillis(batchDuration),
+			UploadsPerSecond: perSecond(batchUploaded, batchDuration),
+		})
 		fmt.Println()
 	}
+
+	finishedAt := time.Now()
+	metrics.FinishedAt = finishedAt.UTC().Format(time.RFC3339Nano)
+	metrics.DurationMS = durationMillis(finishedAt.Sub(startedAt))
+	metrics.Uploaded = int(uploaded.Load())
+	metrics.Failed = int(failed.Load())
+	metrics.UploadsPerSecond = perSecond(metrics.Uploaded, finishedAt.Sub(startedAt))
+	if firstCompletedAt := firstCompletion.Load(); firstCompletedAt > 0 {
+		metrics.FirstCompletionMS = durationMillis(time.Unix(0, firstCompletedAt).Sub(startedAt))
+	}
+	latencyMu.Lock()
+	metrics.LatencyMS = summarizeStressLatencies(latencies)
+	latencyMu.Unlock()
 
 	if len(allErrs) > 0 {
 		fmt.Printf("\nUpload completed with %d errors:\n", len(allErrs))
 		for _, err := range allErrs {
 			fmt.Printf("  - %v\n", err)
 		}
-		return fmt.Errorf("%d uploads failed", len(allErrs))
+		metrics.ErrorSample = stressErrorSample(allErrs, 100)
+		return metrics, fmt.Errorf("%d uploads failed", len(allErrs))
 	}
 
 	fmt.Printf("\nStress test complete: %d files uploaded successfully\n", uploaded.Load())
-	return nil
+	return metrics, nil
 }
 
 func uploadStressFile(ctx context.Context, client *http.Client, uploadURL string, file stressFile) error {
@@ -497,6 +668,103 @@ func parseStressSize(raw string) (int64, error) {
 		return 0, fmt.Errorf("invalid --size %q: %w", raw, err)
 	}
 	return value * multiplier, nil
+}
+
+func newStressTimedPhase(startedAt, finishedAt time.Time) stressTimedPhase {
+	return stressTimedPhase{
+		StartedAt:  startedAt.UTC().Format(time.RFC3339Nano),
+		FinishedAt: finishedAt.UTC().Format(time.RFC3339Nano),
+		DurationMS: durationMillis(finishedAt.Sub(startedAt)),
+	}
+}
+
+func durationMillis(duration time.Duration) int64 {
+	if duration <= 0 {
+		return 0
+	}
+	return duration.Milliseconds()
+}
+
+func perSecond(count int, duration time.Duration) float64 {
+	if count <= 0 || duration <= 0 {
+		return 0
+	}
+	return float64(count) / duration.Seconds()
+}
+
+func summarizeStressLatencies(latencies []time.Duration) stressLatencyMetrics {
+	if len(latencies) == 0 {
+		return stressLatencyMetrics{}
+	}
+
+	sorted := append([]time.Duration(nil), latencies...)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i] < sorted[j]
+	})
+
+	return stressLatencyMetrics{
+		Min: durationMillis(sorted[0]),
+		P50: durationMillis(stressPercentile(sorted, 0.50)),
+		P95: durationMillis(stressPercentile(sorted, 0.95)),
+		P99: durationMillis(stressPercentile(sorted, 0.99)),
+		Max: durationMillis(sorted[len(sorted)-1]),
+	}
+}
+
+func stressPercentile(sorted []time.Duration, percentile float64) time.Duration {
+	if len(sorted) == 0 {
+		return 0
+	}
+	if percentile <= 0 {
+		return sorted[0]
+	}
+	if percentile >= 1 {
+		return sorted[len(sorted)-1]
+	}
+
+	index := int(percentile*float64(len(sorted)-1) + 0.5)
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(sorted) {
+		index = len(sorted) - 1
+	}
+	return sorted[index]
+}
+
+func stressErrorSample(errs []error, limit int) []string {
+	if limit < 1 || len(errs) == 0 {
+		return nil
+	}
+	if len(errs) < limit {
+		limit = len(errs)
+	}
+
+	sample := make([]string, 0, limit)
+	for _, err := range errs[:limit] {
+		sample = append(sample, err.Error())
+	}
+	return sample
+}
+
+func writeStressMetrics(path string, metrics *stressRunMetrics) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("failed to create metrics directory: %w", err)
+	}
+
+	file, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("failed to create metrics file: %w", err)
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(metrics); err != nil {
+		return fmt.Errorf("failed to write metrics file: %w", err)
+	}
+
+	return nil
 }
 
 func printStressProgress(label string, current, total int, detail string) {

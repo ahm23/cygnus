@@ -102,17 +102,24 @@ func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundS
 		return
 	}
 
-	currentHeight := r.atlas.State.Height
-	challenges, skippedOld, skippedFuture, skippedInvalid := r.filterCurrentRoundChallenges(challenges, currentHeight)
+	currentHeight := maxInt64(r.latestBlockHeight.Load(), roundStartHeight)
+	challenges, skippedOld, skippedFuture, skippedInvalid := r.filterRoundChallenges(challenges, roundStartHeight)
 	if skippedOld > 0 || skippedFuture > 0 || skippedInvalid > 0 {
 		r.logger.Info("Dropped stale challenge proofs before scheduling",
+			zap.Int64("round_start_height", roundStartHeight),
 			zap.Int64("current_height", currentHeight),
+			zap.Int("skipped_old", skippedOld),
+			zap.Int("skipped_future", skippedFuture),
+			zap.Int("skipped_invalid", skippedInvalid),
 			zap.Int("remaining_challenges", len(challenges)))
 	}
 	if len(challenges) == 0 {
 		r.logger.Info("No current-round challenges to prove",
 			zap.Int64("round_height", roundStartHeight),
-			zap.String("round", round))
+			zap.String("round", round),
+			zap.Int("skipped_old", skippedOld),
+			zap.Int("skipped_future", skippedFuture),
+			zap.Int("skipped_invalid", skippedInvalid))
 		return
 	}
 
@@ -160,12 +167,12 @@ func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundS
 	for targetHeight, batch := range batches {
 		targetHeight := targetHeight
 		batch := append([]*storageTypes.StorageChallenge(nil), batch...)
-		go r.proveChallengeBatchAtHeight(ctx, round, targetHeight, batch)
+		go r.proveChallengeBatchAtHeight(ctx, roundStartHeight, round, targetHeight, batch)
 	}
 }
 
 // === proveChallengeBatchAtHeight waits for a given block height and submits proofs for a batch of challenges
-func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, round string, targetHeight int64, challenges []*storageTypes.StorageChallenge) {
+func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, roundStartHeight int64, round string, targetHeight int64, challenges []*storageTypes.StorageChallenge) {
 	broadcastHeight := targetHeight - 1
 	if broadcastHeight < 0 {
 		broadcastHeight = 0
@@ -198,9 +205,10 @@ func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, ro
 	for _, challenge := range challenges {
 		// soft-check that challenge has not expired
 		currentHeight := r.latestBlockHeight.Load()
-		if !r.isChallengeCurrent(challenge, currentHeight) {
+		if !r.isChallengeProveableForRound(challenge, roundStartHeight, currentHeight) {
 			// Dev Note: this only happens when the provider is under extreme loads (typically long-rolling DDoS)
 			r.logger.Info("Dropping stale challenge",
+				zap.Int64("round_start_height", roundStartHeight),
 				zap.Int64("current_height", currentHeight),
 				zap.Int64("target_height", targetHeight),
 				zap.String("challenge_id", challenge.ChallengeId))
@@ -240,13 +248,12 @@ func (r *chainEventReceiver) claimProofRound(height int64) bool {
 	return true
 }
 
-func (r *chainEventReceiver) filterCurrentRoundChallenges(challenges []*storageTypes.StorageChallenge, currentHeight int64) ([]*storageTypes.StorageChallenge, int, int, int) {
+func (r *chainEventReceiver) filterRoundChallenges(challenges []*storageTypes.StorageChallenge, roundStartHeight int64) ([]*storageTypes.StorageChallenge, int, int, int) {
 	filtered := make([]*storageTypes.StorageChallenge, 0, len(challenges))
 	var skippedOld int
 	var skippedFuture int
 	var skippedInvalid int
 
-	activeRoundStart := currentChallengeRoundStart(currentHeight)
 	for _, challenge := range challenges {
 		challengeRoundStart, ok := challengeRoundStartHeight(challenge)
 		if !ok {
@@ -254,9 +261,9 @@ func (r *chainEventReceiver) filterCurrentRoundChallenges(challenges []*storageT
 			continue
 		}
 		switch {
-		case challengeRoundStart < activeRoundStart:
+		case challengeRoundStart < roundStartHeight:
 			skippedOld++
-		case challengeRoundStart > activeRoundStart:
+		case challengeRoundStart > roundStartHeight:
 			skippedFuture++
 		default:
 			filtered = append(filtered, challenge)
@@ -267,10 +274,7 @@ func (r *chainEventReceiver) filterCurrentRoundChallenges(challenges []*storageT
 }
 
 func challengeTargetWindow(roundStartHeight, currentHeight int64, challenge *storageTypes.StorageChallenge) (int64, int64, bool) {
-	deadlineHeight := roundStartHeight + challengeRoundBlocks
-	if challenge != nil && challenge.DeadlineHeight > 0 && int64(challenge.DeadlineHeight) < deadlineHeight {
-		deadlineHeight = int64(challenge.DeadlineHeight)
-	}
+	deadlineHeight := challengeDeadlineHeight(roundStartHeight, challenge)
 
 	firstTarget := maxInt64(roundStartHeight+1, currentHeight+1)
 	preferredLastTarget := minInt64(roundStartHeight+int64(challengeProofSpreadBlocks), deadlineHeight)
@@ -285,16 +289,23 @@ func challengeTargetWindow(roundStartHeight, currentHeight int64, challenge *sto
 	return firstTarget, lastTarget, true
 }
 
-func (r *chainEventReceiver) isChallengeCurrent(challenge *storageTypes.StorageChallenge, currentHeight int64) bool {
+func (r *chainEventReceiver) isChallengeProveableForRound(challenge *storageTypes.StorageChallenge, roundStartHeight, currentHeight int64) bool {
 	challengeRoundStart, ok := challengeRoundStartHeight(challenge)
-	return ok && challengeRoundStart == currentChallengeRoundStart(currentHeight)
+	if !ok || challengeRoundStart != roundStartHeight {
+		return false
+	}
+	if currentHeight <= 0 {
+		return true
+	}
+	return currentHeight <= challengeDeadlineHeight(roundStartHeight, challenge)
 }
 
-func currentChallengeRoundStart(currentHeight int64) int64 {
-	if currentHeight <= 0 {
-		return 0
+func challengeDeadlineHeight(roundStartHeight int64, challenge *storageTypes.StorageChallenge) int64 {
+	deadlineHeight := roundStartHeight + challengeRoundBlocks
+	if challenge != nil && challenge.DeadlineHeight > 0 && int64(challenge.DeadlineHeight) < deadlineHeight {
+		return int64(challenge.DeadlineHeight)
 	}
-	return (currentHeight / challengeRoundBlocks) * challengeRoundBlocks
+	return deadlineHeight
 }
 
 func challengeRoundStartHeight(challenge *storageTypes.StorageChallenge) (int64, bool) {

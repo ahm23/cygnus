@@ -64,8 +64,10 @@ func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundS
 	batches := make(map[int64][]*storageTypes.StorageChallenge)
 	for i, challenge := range challenges {
 		targetHeight := roundStartHeight + 1 + int64(i%challengeProofSpreadBlocks)
-		if challenge.DeadlineHeight > 0 && targetHeight >= int64(challenge.DeadlineHeight) {
-			targetHeight = int64(challenge.DeadlineHeight) - 1
+		// DeadlineHeight is still a valid block for challenge proofs; txs are
+		// processed before the end-block missed-challenge cleanup runs.
+		if challenge.DeadlineHeight > 0 && targetHeight > int64(challenge.DeadlineHeight) {
+			targetHeight = int64(challenge.DeadlineHeight)
 		}
 		if targetHeight <= roundStartHeight {
 			targetHeight = roundStartHeight + 1

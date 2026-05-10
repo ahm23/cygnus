@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cosmos/cosmos-sdk/client"
@@ -50,6 +51,7 @@ type AtlasWallet struct {
 	txStopOnce      sync.Once
 	txQueueMu       sync.RWMutex
 	txStopped       bool
+	normalTxPause   atomic.Int64
 }
 
 type TxPriority int
@@ -220,6 +222,16 @@ func (w *AtlasWallet) Stop() {
 	})
 }
 
+func (w *AtlasWallet) PauseNormalTxs() {
+	w.normalTxPause.Add(1)
+}
+
+func (w *AtlasWallet) ResumeNormalTxs() {
+	if w.normalTxPause.Add(-1) < 0 {
+		w.normalTxPause.Store(0)
+	}
+}
+
 func (w *AtlasWallet) processTxQueue() {
 	defer w.txWG.Done()
 
@@ -235,6 +247,19 @@ func (w *AtlasWallet) processTxQueue() {
 		}
 
 		if pendingNormal != nil {
+			if w.normalTxPause.Load() > 0 {
+				select {
+				case <-w.txStopChan:
+					w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
+					pendingNormal.result <- walletTxResult{err: fmt.Errorf("wallet transaction queue stopped")}
+					return
+				case req := <-w.highPriorityTxQ:
+					w.handleQueuedTx(req)
+				case <-time.After(25 * time.Millisecond):
+				}
+				continue
+			}
+
 			select {
 			case <-w.txStopChan:
 				w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
@@ -248,6 +273,18 @@ func (w *AtlasWallet) processTxQueue() {
 
 			w.handleQueuedTx(pendingNormal)
 			pendingNormal = nil
+			continue
+		}
+
+		if w.normalTxPause.Load() > 0 {
+			select {
+			case <-w.txStopChan:
+				w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
+				return
+			case req := <-w.highPriorityTxQ:
+				w.handleQueuedTx(req)
+			case <-time.After(25 * time.Millisecond):
+			}
 			continue
 		}
 

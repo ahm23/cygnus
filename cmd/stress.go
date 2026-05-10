@@ -293,7 +293,7 @@ func postStressFiles(ctx context.Context, am *atlas.AtlasManager, files []stress
 			})
 		}
 
-		resp, err := am.Wallet.BroadcastTxGrpc(3, true, msgs...)
+		resp, err := am.Wallet.BroadcastTxGrpc(3, false, msgs...)
 		if err != nil {
 			return fmt.Errorf("failed to post chain batch %d-%d: %w", start+1, end, err)
 		}

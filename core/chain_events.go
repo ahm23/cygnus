@@ -45,10 +45,16 @@ func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64
 	r.storage.RecordChainSync(time.Now().UTC())
 	r.logger.Info("Proof round started", zap.Int64("height", height), zap.String("round", roundOrData))
 
+	queryStarted := time.Now()
 	challenges, err := r.queryAllProviderChallenges(ctx)
 	if err != nil {
 		return err
 	}
+	r.logger.Info("Fetched challenge proofs for round",
+		zap.Int64("round_start_height", height),
+		zap.String("round", roundOrData),
+		zap.Int("challenge_count", len(challenges)),
+		zap.Duration("query_duration", time.Since(queryStarted)))
 
 	r.scheduleChallengeProofs(ctx, height, roundOrData, challenges)
 
@@ -98,7 +104,7 @@ func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundS
 		return
 	}
 
-	currentHeight := r.currentBlockHeight(roundStartHeight)
+	currentHeight := r.latestChainHeight(ctx, roundStartHeight)
 	challenges, skippedOld, skippedFuture, skippedInvalid := r.filterCurrentRoundChallenges(challenges, currentHeight)
 	if skippedOld > 0 || skippedFuture > 0 || skippedInvalid > 0 {
 		r.logger.Info("Dropped stale challenge proofs before scheduling",
@@ -117,23 +123,46 @@ func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundS
 	}
 
 	batches := make(map[int64][]*storageTypes.StorageChallenge)
+	skippedExpired := 0
+	firstTargetHeight := int64(0)
+	lastTargetHeight := int64(0)
 	for i, challenge := range challenges {
-		targetHeight := roundStartHeight + 1 + int64(i%challengeProofSpreadBlocks)
-		// DeadlineHeight is still a valid block for challenge proofs; txs are
-		// processed before the end-block missed-challenge cleanup runs.
-		if challenge.DeadlineHeight > 0 && targetHeight > int64(challenge.DeadlineHeight) {
-			targetHeight = int64(challenge.DeadlineHeight)
+		firstTarget, lastTarget, ok := challengeTargetWindow(roundStartHeight, currentHeight, challenge)
+		if !ok {
+			skippedExpired++
+			continue
 		}
-		if targetHeight <= roundStartHeight {
-			targetHeight = roundStartHeight + 1
+		if firstTargetHeight == 0 || firstTarget < firstTargetHeight {
+			firstTargetHeight = firstTarget
 		}
+		if lastTarget > lastTargetHeight {
+			lastTargetHeight = lastTarget
+		}
+
+		targetHeight := firstTarget + int64(i%int(lastTarget-firstTarget+1))
 		batches[targetHeight] = append(batches[targetHeight], challenge)
+	}
+	if skippedExpired > 0 {
+		r.logger.Info("Dropped expired challenge proofs before scheduling",
+			zap.Int64("current_height", currentHeight),
+			zap.Int("skipped_expired", skippedExpired),
+			zap.Int("remaining_challenges", len(challenges)-skippedExpired))
+	}
+	if len(batches) == 0 {
+		r.logger.Info("No schedulable current-round challenges to prove",
+			zap.Int64("round_start_height", roundStartHeight),
+			zap.Int64("current_height", currentHeight),
+			zap.String("round", round))
+		return
 	}
 
 	r.logger.Info("Scheduled challenge proofs across upcoming blocks",
 		zap.Int64("round_start_height", roundStartHeight),
+		zap.Int64("current_height", currentHeight),
+		zap.Int64("first_target_height", firstTargetHeight),
+		zap.Int64("last_target_height", lastTargetHeight),
 		zap.String("round", round),
-		zap.Int("challenge_count", len(challenges)),
+		zap.Int("challenge_count", len(challenges)-skippedExpired),
 		zap.Int("block_count", len(batches)))
 
 	for targetHeight, batch := range batches {
@@ -241,6 +270,18 @@ func (r *chainEventReceiver) currentBlockHeight(fallback int64) int64 {
 	return fallback
 }
 
+func (r *chainEventReceiver) latestChainHeight(ctx context.Context, fallback int64) int64 {
+	latestHeight, err := r.atlas.LatestBlockHeight(ctx)
+	if err != nil {
+		r.logger.Warn("Failed to refresh latest block height",
+			zap.Int64("fallback_height", fallback),
+			zap.Error(err))
+		return r.currentBlockHeight(fallback)
+	}
+	r.recordBlockHeight(latestHeight)
+	return latestHeight
+}
+
 func (r *chainEventReceiver) filterCurrentRoundChallenges(challenges []*storageTypes.StorageChallenge, currentHeight int64) ([]*storageTypes.StorageChallenge, int, int, int) {
 	filtered := make([]*storageTypes.StorageChallenge, 0, len(challenges))
 	var skippedOld int
@@ -265,6 +306,25 @@ func (r *chainEventReceiver) filterCurrentRoundChallenges(challenges []*storageT
 	}
 
 	return filtered, skippedOld, skippedFuture, skippedInvalid
+}
+
+func challengeTargetWindow(roundStartHeight, currentHeight int64, challenge *storageTypes.StorageChallenge) (int64, int64, bool) {
+	deadlineHeight := roundStartHeight + challengeRoundBlocks
+	if challenge != nil && challenge.DeadlineHeight > 0 && int64(challenge.DeadlineHeight) < deadlineHeight {
+		deadlineHeight = int64(challenge.DeadlineHeight)
+	}
+
+	firstTarget := maxInt64(roundStartHeight+1, currentHeight+1)
+	preferredLastTarget := minInt64(roundStartHeight+int64(challengeProofSpreadBlocks), deadlineHeight)
+	lastTarget := preferredLastTarget
+	if firstTarget > lastTarget {
+		lastTarget = deadlineHeight
+	}
+	if firstTarget > lastTarget {
+		return 0, 0, false
+	}
+
+	return firstTarget, lastTarget, true
 }
 
 func (r *chainEventReceiver) isChallengeCurrent(challenge *storageTypes.StorageChallenge, currentHeight int64) bool {
@@ -302,4 +362,18 @@ func challengeRoundStartHeightFromID(challengeID string) (int64, bool) {
 		return 0, false
 	}
 	return height, true
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }

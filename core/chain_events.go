@@ -2,6 +2,9 @@ package core
 
 import (
 	"context"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	storageTypes "atlas/x/storage/types"
@@ -13,22 +16,32 @@ import (
 	"go.uber.org/zap"
 )
 
-const challengeProofSpreadBlocks = 10
+const (
+	challengeRoundBlocks       int64 = 10
+	challengeProofSpreadBlocks       = int(challengeRoundBlocks)
+)
 
 // chainEventReceiver bridges atlas blockchain events to the storage manager.
 type chainEventReceiver struct {
-	atlas   *atlas.AtlasManager
-	storage *storage.StorageManager
-	logger  *zap.Logger
+	atlas             *atlas.AtlasManager
+	storage           *storage.StorageManager
+	logger            *zap.Logger
+	latestBlockHeight atomic.Int64
 }
 
 var _ atlas.ChainEventReceiver = (*chainEventReceiver)(nil)
+
+func (r *chainEventReceiver) OnNewBlock(ctx context.Context, height int64) error {
+	r.recordBlockHeight(height)
+	return nil
+}
 
 func (r *chainEventReceiver) OnFileDeleted(ctx context.Context, fileID string) error {
 	return r.storage.DeleteFile(ctx, fileID)
 }
 
 func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64, roundOrData string) error {
+	r.recordBlockHeight(height)
 	r.storage.RecordChainSync(time.Now().UTC())
 	r.logger.Info("Proof round started", zap.Int64("height", height), zap.String("round", roundOrData))
 
@@ -85,6 +98,24 @@ func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundS
 		return
 	}
 
+	currentHeight := r.currentBlockHeight(roundStartHeight)
+	challenges, skippedOld, skippedFuture, skippedInvalid := r.filterCurrentRoundChallenges(challenges, currentHeight)
+	if skippedOld > 0 || skippedFuture > 0 || skippedInvalid > 0 {
+		r.logger.Info("Dropped stale challenge proofs before scheduling",
+			zap.Int64("current_height", currentHeight),
+			zap.Int64("active_round_start", currentChallengeRoundStart(currentHeight)),
+			zap.Int("skipped_old", skippedOld),
+			zap.Int("skipped_future", skippedFuture),
+			zap.Int("skipped_invalid", skippedInvalid),
+			zap.Int("remaining_challenges", len(challenges)))
+	}
+	if len(challenges) == 0 {
+		r.logger.Info("No current-round challenges to prove",
+			zap.Int64("height", roundStartHeight),
+			zap.String("round", round))
+		return
+	}
+
 	batches := make(map[int64][]*storageTypes.StorageChallenge)
 	for i, challenge := range challenges {
 		targetHeight := roundStartHeight + 1 + int64(i%challengeProofSpreadBlocks)
@@ -134,7 +165,26 @@ func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, ro
 		zap.Int64("broadcast_height", broadcastHeight),
 		zap.Int("challenge_count", len(challenges)))
 
+	if latestHeight, err := r.atlas.LatestBlockHeight(ctx); err != nil {
+		r.logger.Warn("Failed to refresh latest block height before proving challenges",
+			zap.Int64("target_height", targetHeight),
+			zap.Error(err))
+	} else {
+		r.recordBlockHeight(latestHeight)
+	}
+
 	for _, challenge := range challenges {
+		currentHeight := r.currentBlockHeight(targetHeight)
+		if !r.isChallengeCurrent(challenge, currentHeight) {
+			r.logger.Info("Dropping stale scheduled challenge proof",
+				zap.Int64("current_height", currentHeight),
+				zap.Int64("active_round_start", currentChallengeRoundStart(currentHeight)),
+				zap.String("challenge_id", challenge.ChallengeId),
+				zap.Uint64("created_height", challenge.CreatedHeight),
+				zap.Int64("target_height", targetHeight))
+			continue
+		}
+
 		r.storage.RecordChainSync(time.Now().UTC())
 		err := r.storage.ProveFile(ctx, challenge.FileId, challenge.ChallengeId, int64(challenge.ChunkIndex))
 		if err != nil {
@@ -150,8 +200,92 @@ func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, ro
 }
 
 func (r *chainEventReceiver) OnStartProofWindow(ctx context.Context, height int64, windowOrData string) error {
+	r.recordBlockHeight(height)
 	// [TBD]: this chain-sync is pretty useless. remove it?
 	r.storage.RecordChainSync(time.Now().UTC())
 	r.logger.Info("Proof window started", zap.Int64("height", height), zap.String("window", windowOrData))
 	return nil
+}
+
+func (r *chainEventReceiver) recordBlockHeight(height int64) {
+	for {
+		current := r.latestBlockHeight.Load()
+		if height <= current {
+			return
+		}
+		if r.latestBlockHeight.CompareAndSwap(current, height) {
+			return
+		}
+	}
+}
+
+func (r *chainEventReceiver) currentBlockHeight(fallback int64) int64 {
+	height := r.latestBlockHeight.Load()
+	if height > 0 {
+		return height
+	}
+	return fallback
+}
+
+func (r *chainEventReceiver) filterCurrentRoundChallenges(challenges []*storageTypes.StorageChallenge, currentHeight int64) ([]*storageTypes.StorageChallenge, int, int, int) {
+	filtered := make([]*storageTypes.StorageChallenge, 0, len(challenges))
+	var skippedOld int
+	var skippedFuture int
+	var skippedInvalid int
+
+	activeRoundStart := currentChallengeRoundStart(currentHeight)
+	for _, challenge := range challenges {
+		challengeRoundStart, ok := challengeRoundStartHeight(challenge)
+		if !ok {
+			skippedInvalid++
+			continue
+		}
+		switch {
+		case challengeRoundStart < activeRoundStart:
+			skippedOld++
+		case challengeRoundStart > activeRoundStart:
+			skippedFuture++
+		default:
+			filtered = append(filtered, challenge)
+		}
+	}
+
+	return filtered, skippedOld, skippedFuture, skippedInvalid
+}
+
+func (r *chainEventReceiver) isChallengeCurrent(challenge *storageTypes.StorageChallenge, currentHeight int64) bool {
+	challengeRoundStart, ok := challengeRoundStartHeight(challenge)
+	return ok && challengeRoundStart == currentChallengeRoundStart(currentHeight)
+}
+
+func currentChallengeRoundStart(currentHeight int64) int64 {
+	if currentHeight <= 0 {
+		return 0
+	}
+	return (currentHeight / challengeRoundBlocks) * challengeRoundBlocks
+}
+
+func challengeRoundStartHeight(challenge *storageTypes.StorageChallenge) (int64, bool) {
+	if challenge == nil {
+		return 0, false
+	}
+	if height, ok := challengeRoundStartHeightFromID(challenge.ChallengeId); ok {
+		return height, true
+	}
+	if challenge.CreatedHeight > 0 {
+		return int64(challenge.CreatedHeight), true
+	}
+	return 0, false
+}
+
+func challengeRoundStartHeightFromID(challengeID string) (int64, bool) {
+	prefix, _, ok := strings.Cut(challengeID, "-")
+	if !ok || prefix == "" {
+		return 0, false
+	}
+	height, err := strconv.ParseInt(prefix, 10, 64)
+	if err != nil || height < 0 {
+		return 0, false
+	}
+	return height, true
 }

@@ -116,14 +116,9 @@ func (am *AtlasManager) ConnectWalletWithKeyNameAndSource(keyName, keySource str
 }
 
 func (am *AtlasManager) WaitForHeight(ctx context.Context, targetHeight int64) error {
-	rpcAddr := strings.TrimSuffix(am.cfg.ChainCfg.RPCAddr, "/")
-	if !strings.HasPrefix(rpcAddr, "http://") && !strings.HasPrefix(rpcAddr, "https://") {
-		rpcAddr = "http://" + rpcAddr
-	}
-
-	client, err := rpchttp.New(rpcAddr, "/websocket")
+	client, err := am.rpcClient()
 	if err != nil {
-		return fmt.Errorf("failed to create RPC client: %w", err)
+		return err
 	}
 
 	ticker := time.NewTicker(250 * time.Millisecond)
@@ -144,6 +139,31 @@ func (am *AtlasManager) WaitForHeight(ctx context.Context, targetHeight int64) e
 		case <-ticker.C:
 		}
 	}
+}
+
+func (am *AtlasManager) LatestBlockHeight(ctx context.Context) (int64, error) {
+	client, err := am.rpcClient()
+	if err != nil {
+		return 0, err
+	}
+	status, err := client.Status(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get latest block height: %w", err)
+	}
+	return status.SyncInfo.LatestBlockHeight, nil
+}
+
+func (am *AtlasManager) rpcClient() (*rpchttp.HTTP, error) {
+	rpcAddr := strings.TrimSuffix(am.cfg.ChainCfg.RPCAddr, "/")
+	if !strings.HasPrefix(rpcAddr, "http://") && !strings.HasPrefix(rpcAddr, "https://") {
+		rpcAddr = "http://" + rpcAddr
+	}
+
+	client, err := rpchttp.New(rpcAddr, "/websocket")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create RPC client: %w", err)
+	}
+	return client, nil
 }
 
 // Close closes the GRPC connection

@@ -39,6 +39,8 @@ const (
 
 // ChainEventReceiver defines callbacks for relevant events
 type ChainEventReceiver interface {
+	OnNewBlock(ctx context.Context, height int64) error
+
 	// Tx events
 	OnFileDeleted(ctx context.Context, fileID string) error
 
@@ -188,6 +190,9 @@ func (el *EventListener) handleBlockEvent(ctx context.Context, result wstypes.Re
 	if !hasTm || len(tmEventVals) == 0 || tmEventVals[0] != "NewBlock" {
 		el.logger.Warn("Unexpected tm.event in block subscription")
 		return
+	}
+	if err := el.receiver.OnNewBlock(ctx, height); err != nil {
+		el.logger.Error("Handle new block failed", zap.Int64("height", height), zap.Error(err))
 	}
 
 	// 2. Now look for your custom EndBlock events

@@ -18,8 +18,10 @@ import (
 )
 
 const (
-	challengeRoundBlocks       int64 = 10
-	challengeProofSpreadBlocks       = int(challengeRoundBlocks * 75 / 100)
+	challengeRoundBlocks        int64 = 10
+	challengeProofSpreadBlocks        = int(challengeRoundBlocks * 75 / 100)
+	challengeRoundQueryAttempts       = 12
+	challengeRoundQueryDelay          = 250 * time.Millisecond
 )
 
 // chainEventReceiver bridges atlas blockchain events to the storage manager.
@@ -48,15 +50,62 @@ func (r *chainEventReceiver) OnFileDeleted(ctx context.Context, fileID string) e
 // === OnStartProofRound is an event handler for new proof round events
 func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64, round string) error {
 	r.logger.Debug("Started new challenge round", zap.String("round", round))
-	challenges, err := r.queryAllProviderChallenges(ctx)
+	challenges, err := r.queryProviderChallengesForRound(ctx, height, round)
 	if err != nil {
 		return err
 	}
-	r.logger.Debug("Fetched challenges for round", zap.Int("challenge_count", len(challenges)))
 
 	r.scheduleChallengeProofs(ctx, height, round, challenges)
 
 	return nil
+}
+
+func (r *chainEventReceiver) queryProviderChallengesForRound(ctx context.Context, roundStartHeight int64, round string) ([]*storageTypes.StorageChallenge, error) {
+	var lastChallenges []*storageTypes.StorageChallenge
+
+	for attempt := 1; attempt <= challengeRoundQueryAttempts; attempt++ {
+		challenges, err := r.queryAllProviderChallenges(ctx)
+		if err != nil {
+			return nil, err
+		}
+		lastChallenges = challenges
+
+		current, skippedOld, skippedFuture, skippedInvalid := r.filterRoundChallenges(challenges, roundStartHeight)
+		minRound, maxRound, hasRound := challengeRoundBounds(challenges)
+		r.logger.Debug("Fetched challenges for round",
+			zap.Int("attempt", attempt),
+			zap.String("round", round),
+			zap.Int64("round_start_height", roundStartHeight),
+			zap.Int("challenge_count", len(challenges)),
+			zap.Int("current_round_challenges", len(current)),
+			zap.Int("skipped_old", skippedOld),
+			zap.Int("skipped_future", skippedFuture),
+			zap.Int("skipped_invalid", skippedInvalid),
+			zap.Int64("min_challenge_round", minRound),
+			zap.Int64("max_challenge_round", maxRound),
+			zap.Bool("has_challenge_rounds", hasRound))
+
+		if len(current) > 0 || attempt == challengeRoundQueryAttempts {
+			return challenges, nil
+		}
+
+		r.logger.Debug("Current-round challenges not visible yet; retrying challenge query",
+			zap.Int("attempt", attempt),
+			zap.String("round", round),
+			zap.Int64("round_start_height", roundStartHeight),
+			zap.Int("current_round_challenges", len(current)),
+			zap.Int("skipped_old", skippedOld),
+			zap.Int("skipped_future", skippedFuture),
+			zap.Int("skipped_invalid", skippedInvalid))
+
+		select {
+		case <-ctx.Done():
+			return lastChallenges, ctx.Err()
+		case <-time.After(challengeRoundQueryDelay):
+		}
+	}
+
+	return lastChallenges, nil
 }
 
 func (r *chainEventReceiver) queryAllProviderChallenges(ctx context.Context) ([]*storageTypes.StorageChallenge, error) {
@@ -331,6 +380,28 @@ func challengeRoundStartHeightFromID(challengeID string) (int64, bool) {
 		return 0, false
 	}
 	return height, true
+}
+
+func challengeRoundBounds(challenges []*storageTypes.StorageChallenge) (int64, int64, bool) {
+	var minRound int64
+	var maxRound int64
+	var hasRound bool
+
+	for _, challenge := range challenges {
+		roundStart, ok := challengeRoundStartHeight(challenge)
+		if !ok {
+			continue
+		}
+		if !hasRound || roundStart < minRound {
+			minRound = roundStart
+		}
+		if !hasRound || roundStart > maxRound {
+			maxRound = roundStart
+		}
+		hasRound = true
+	}
+
+	return minRound, maxRound, hasRound
 }
 
 func minInt64(a, b int64) int64 {

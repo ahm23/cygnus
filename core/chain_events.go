@@ -18,7 +18,7 @@ import (
 
 const (
 	challengeRoundBlocks       int64 = 10
-	challengeProofSpreadBlocks       = int(challengeRoundBlocks)
+	challengeProofSpreadBlocks       = int(challengeRoundBlocks * 75 / 100)
 )
 
 // chainEventReceiver bridges atlas blockchain events to the storage manager.

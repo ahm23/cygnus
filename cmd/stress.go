@@ -32,8 +32,9 @@ import (
 )
 
 const (
-	defaultStressPostBatchSize   = 250
-	defaultStressUploadBatchSize = 500
+	defaultStressPostBatchSize     = 250
+	defaultStressUploadBatchSize   = 500
+	defaultStressPostCommitTimeout = 5 * time.Minute
 )
 
 type stressFile struct {
@@ -275,6 +276,7 @@ func postStressFiles(ctx context.Context, am *atlas.AtlasManager, files []stress
 	fmt.Printf("\nPosting files to chain...\n")
 
 	creator := am.Wallet.GetAddress()
+	lastTxHash := ""
 	for start := 0; start < len(files); start += batchSize {
 		end := start + batchSize
 		if end > len(files) {
@@ -297,9 +299,19 @@ func postStressFiles(ctx context.Context, am *atlas.AtlasManager, files []stress
 		if err != nil {
 			return fmt.Errorf("failed to post chain batch %d-%d: %w", start+1, end, err)
 		}
+		lastTxHash = resp.TxHash
 		printStressProgress("posted", end, len(files), resp.TxHash)
 	}
 	fmt.Println()
+
+	if lastTxHash != "" {
+		fmt.Printf("Waiting for final chain post tx to commit: %s\n", lastTxHash)
+		resp, err := am.Wallet.WaitForTxWithTimeout(lastTxHash, defaultStressPostCommitTimeout)
+		if err != nil {
+			return fmt.Errorf("failed waiting for final chain post tx %s: %w", lastTxHash, err)
+		}
+		fmt.Printf("Final chain post tx committed at height %d\n", resp.Height)
+	}
 
 	return nil
 }

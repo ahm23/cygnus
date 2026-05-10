@@ -384,6 +384,10 @@ func (w *AtlasWallet) WaitForTx(txHash string) (*sdk.TxResponse, error) {
 	return w.waitForTxWithTimeout(txHash, walletTxOpTimeout)
 }
 
+func (w *AtlasWallet) WaitForTxWithTimeout(txHash string, timeout time.Duration) (*sdk.TxResponse, error) {
+	return w.waitForTxWithTimeout(txHash, timeout)
+}
+
 func (w *AtlasWallet) waitForTxWithTimeout(txHash string, timeout time.Duration) (*sdk.TxResponse, error) {
 	if w.txClient == nil {
 		return nil, fmt.Errorf("tx client not initialized")

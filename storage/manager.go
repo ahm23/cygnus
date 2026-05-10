@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	merkletree "github.com/ahm23/go-merkletree-xxh"
@@ -36,6 +37,8 @@ type StorageManager struct {
 	lastProofAt   time.Time
 	lastChainSync time.Time
 	lastChallenge time.Time
+
+	uploadProofPause atomic.Int64
 }
 
 func NewStorageManager(cfg *config.Config, logger *zap.Logger, atlas *atlas.AtlasManager) (*StorageManager, error) {
@@ -143,9 +146,44 @@ func (sm *StorageManager) recordProofActivity(at time.Time) {
 	sm.statusMu.Unlock()
 }
 
+func (sm *StorageManager) PauseUploadProofs() {
+	sm.uploadProofPause.Add(1)
+}
+
+func (sm *StorageManager) ResumeUploadProofs() {
+	if sm.uploadProofPause.Add(-1) < 0 {
+		sm.uploadProofPause.Store(0)
+	}
+}
+
+func (sm *StorageManager) waitForUploadProofs(ctx context.Context) error {
+	if sm.uploadProofPause.Load() == 0 {
+		return nil
+	}
+
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+
+	for sm.uploadProofPause.Load() > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+
+	return nil
+}
+
 func (sm *StorageManager) submitProof(ctx context.Context, fileID, challengeID string, proof *merkletree.Proof, chunkIndex uint64, chunkData []byte) error {
 	if sm.atlas == nil || sm.atlas.Wallet == nil {
 		return fmt.Errorf("wallet not connected")
+	}
+
+	if challengeID == "" {
+		if err := sm.waitForUploadProofs(ctx); err != nil {
+			return err
+		}
 	}
 
 	msg := &storageTypes.MsgProveFile{

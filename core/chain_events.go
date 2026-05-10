@@ -12,7 +12,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const challengeProofSpreadBlocks = 9
+const challengeProofSpreadBlocks = 10
 
 // chainEventReceiver bridges atlas blockchain events to the storage manager.
 type chainEventReceiver struct {

@@ -290,7 +290,7 @@ func (sm *StorageManager) submitProof(ctx context.Context, fileID, challengeID s
 	}
 
 	if challengeID != "" {
-		if _, err := sm.atlas.Wallet.BroadcastTxGrpcHighPriority(0, false, msg); err != nil {
+		if _, err := sm.atlas.Wallet.BroadcastExpeditedTxGrpc(0, false, msg); err != nil {
 			return err
 		}
 	} else {

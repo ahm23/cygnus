@@ -44,24 +44,17 @@ type AtlasWallet struct {
 	gasPrices     string
 	gasAdjustment float64
 
-	txQueue         chan *walletTxRequest
-	highPriorityTxQ chan *walletTxRequest
-	txStopChan      chan struct{}
-	txWG            sync.WaitGroup
-	txStopOnce      sync.Once
-	txQueueMu       sync.RWMutex
-	txStopped       bool
-	normalTxPause   atomic.Int64
+	txQueue          chan *walletTx
+	txQueueExpedited chan *walletTx
+	txStopChan       chan struct{}
+	txWG             sync.WaitGroup
+	txStopOnce       sync.Once
+	txQueueMu        sync.RWMutex
+	txStopped        bool
+	normalTxPause    atomic.Int64
 }
 
-type TxPriority int
-
-const (
-	TxPriorityNormal TxPriority = iota
-	TxPriorityHigh
-)
-
-type walletTxRequest struct {
+type walletTx struct {
 	retries int
 	wait    bool
 	msgs    []sdk.Msg
@@ -153,65 +146,56 @@ func NewAtlasWalletWithKeyNameAndSource(cfg *config.Config, logger *zap.Logger, 
 		gasPrices:     gasPrices,
 		gasAdjustment: gasAdjustment,
 
-		txQueue:         make(chan *walletTxRequest, walletTxQueueSize),
-		highPriorityTxQ: make(chan *walletTxRequest, walletTxQueueSize),
-		txStopChan:      make(chan struct{}),
+		txQueue:          make(chan *walletTx, walletTxQueueSize),
+		txQueueExpedited: make(chan *walletTx, walletTxQueueSize),
+		txStopChan:       make(chan struct{}),
 	}
 
 	if err := w.refreshAccountInfo(context.Background()); err != nil {
 		return nil, fmt.Errorf("failed to fetch initial account info: %w", err)
 	}
 
-	w.startTxQueue()
+	w.txWG.Add(1)
+	go w.processTxQueue()
 
 	return w, nil
 }
 
+// GetSequence gets the wallet's sequence number
+func (w *AtlasWallet) GetSequence() uint64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	return w.sequence
+}
+
+// GetAddress gets the wallet's address
+func (w *AtlasWallet) GetAddress() string {
+	return w.address.String()
+}
+
 // BroadcastTx broadcasts a transaction
 func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
-	return w.BroadcastTxGrpcWithPriority(retries, wait, TxPriorityNormal, msgs...)
+	return w.executeTx(retries, wait, false, msgs...)
 }
 
-func (w *AtlasWallet) BroadcastTxGrpcHighPriority(retries int, wait bool, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
-	return w.BroadcastTxGrpcWithPriority(retries, wait, TxPriorityHigh, msgs...)
+// BroadcastExpeditedTxGrpc broadcasts a transaction with priority over all other standard transactions to be submitted.
+func (w *AtlasWallet) BroadcastExpeditedTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
+	return w.executeTx(retries, wait, true, msgs...)
 }
 
-func (w *AtlasWallet) BroadcastTxGrpcWithPriority(retries int, wait bool, priority TxPriority, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
-	msgsCopy := append([]sdk.Msg(nil), msgs...)
-	req := &walletTxRequest{
-		retries: retries,
-		wait:    wait,
-		msgs:    msgsCopy,
-		result:  make(chan walletTxResult, 1),
-	}
-
-	queue := w.txQueue
-	if priority == TxPriorityHigh {
-		queue = w.highPriorityTxQ
-	}
-
-	w.txQueueMu.RLock()
-	if w.txStopped {
-		w.txQueueMu.RUnlock()
-		return nil, fmt.Errorf("wallet transaction queue stopped")
-	}
-	select {
-	case queue <- req:
-		w.txQueueMu.RUnlock()
-	case <-w.txStopChan:
-		w.txQueueMu.RUnlock()
-		return nil, fmt.Errorf("wallet transaction queue stopped")
-	}
-
-	result := <-req.result
-	return result.resp, result.err
+// WaitForTx waits for transaction to be included in a block.
+func (w *AtlasWallet) WaitForTx(txHash string) (*sdk.TxResponse, error) {
+	return w.waitForTx(txHash, walletTxOpTimeout)
 }
 
-func (w *AtlasWallet) startTxQueue() {
-	w.txWG.Add(1)
-	go w.processTxQueue()
+// WaitForTxWithTimeout waits for transaction to be included in a block.
+func (w *AtlasWallet) WaitForTxWithTimeout(txHash string, timeout time.Duration) (*sdk.TxResponse, error) {
+	return w.waitForTx(txHash, timeout)
 }
 
+// Stop sends a stop signal to all active wallet goroutines such as the transaction queue poller.
+// Consequently, it also clears all queued transactions.
 func (w *AtlasWallet) Stop() {
 	w.txStopOnce.Do(func() {
 		w.txQueueMu.Lock()
@@ -222,90 +206,79 @@ func (w *AtlasWallet) Stop() {
 	})
 }
 
-func (w *AtlasWallet) PauseNormalTxs() {
-	w.normalTxPause.Add(1)
-}
-
-func (w *AtlasWallet) ResumeNormalTxs() {
-	if w.normalTxPause.Add(-1) < 0 {
-		w.normalTxPause.Store(0)
+// executeTx broadcasts a tx and provides options to retry the tx a given number of times,
+// wait for the tx to be included in a block, and expedite the tx.
+func (w *AtlasWallet) executeTx(retries int, wait bool, expedite bool, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
+	msgsCopy := append([]sdk.Msg(nil), msgs...)
+	tx := &walletTx{
+		retries: retries,
+		wait:    wait,
+		msgs:    msgsCopy,
+		result:  make(chan walletTxResult, 1),
 	}
+
+	// select standard or expedited queue
+	queue := w.txQueue
+	if expedite {
+		queue = w.txQueueExpedited
+	}
+
+	// check for stop signal
+	select {
+	case <-w.txStopChan:
+		return nil, fmt.Errorf("wallet transaction queue stopped")
+	default:
+	}
+
+	// add tx to queue
+	select {
+	case queue <- tx:
+	case <-w.txStopChan:
+		return nil, fmt.Errorf("wallet transaction queue stopped")
+	}
+
+	// wait for tx result
+	result := <-tx.result
+	return result.resp, result.err
 }
 
+// processTxQueue will continously poll for new transactions in the txQueue channels and handle them.
+// The polling can be stopped using the stop signal channel.
 func (w *AtlasWallet) processTxQueue() {
 	defer w.txWG.Done()
+	defer w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
 
-	var pendingNormal *walletTxRequest
 	for {
+		// priority to expedited
 		select {
 		case <-w.txStopChan:
-			w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
 			return
-		case req := <-w.highPriorityTxQ:
+		case req := <-w.txQueueExpedited:
 			w.handleQueuedTx(req)
+			continue // Loop back to check for more expedited
 		default:
 		}
 
-		if pendingNormal != nil {
-			if w.normalTxPause.Load() > 0 {
-				select {
-				case <-w.txStopChan:
-					w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
-					pendingNormal.result <- walletTxResult{err: fmt.Errorf("wallet transaction queue stopped")}
-					return
-				case req := <-w.highPriorityTxQ:
-					w.handleQueuedTx(req)
-				case <-time.After(25 * time.Millisecond):
-				}
-				continue
-			}
-
-			select {
-			case <-w.txStopChan:
-				w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
-				pendingNormal.result <- walletTxResult{err: fmt.Errorf("wallet transaction queue stopped")}
-				return
-			case req := <-w.highPriorityTxQ:
-				w.handleQueuedTx(req)
-				continue
-			default:
-			}
-
-			w.handleQueuedTx(pendingNormal)
-			pendingNormal = nil
-			continue
-		}
-
-		if w.normalTxPause.Load() > 0 {
-			select {
-			case <-w.txStopChan:
-				w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
-				return
-			case req := <-w.highPriorityTxQ:
-				w.handleQueuedTx(req)
-			case <-time.After(25 * time.Millisecond):
-			}
-			continue
-		}
-
+		// process normal if no expedited available
 		select {
 		case <-w.txStopChan:
-			w.failQueuedTxs(fmt.Errorf("wallet transaction queue stopped"))
 			return
-		case req := <-w.highPriorityTxQ:
+		case req := <-w.txQueueExpedited: //
 			w.handleQueuedTx(req)
 		case req := <-w.txQueue:
-			pendingNormal = req
+			w.handleQueuedTx(req)
 		}
 	}
 }
 
+// failQueuedTxs fails all transactions queued in the standard and expedited queues.
 func (w *AtlasWallet) failQueuedTxs(err error) {
-	w.failTxQueue(w.highPriorityTxQ, err)
+	w.failTxQueue(w.txQueueExpedited, err)
 	w.failTxQueue(w.txQueue, err)
 }
 
-func (w *AtlasWallet) failTxQueue(queue chan *walletTxRequest, err error) {
+// failTxQueue fails all the transactions in a given queue.
+func (w *AtlasWallet) failTxQueue(queue chan *walletTx, err error) {
 	for {
 		select {
 		case req := <-queue:
@@ -316,76 +289,66 @@ func (w *AtlasWallet) failTxQueue(queue chan *walletTxRequest, err error) {
 	}
 }
 
-func (w *AtlasWallet) handleQueuedTx(req *walletTxRequest) {
-	w.broadcastQueuedTx(req)
-}
-
-func (w *AtlasWallet) broadcastQueuedTx(req *walletTxRequest) {
-	var lastErr error
+// handleQueuedTx submits the request messages for signing and broadcasting
+// and waits for block inclusion if specified by the walletTx object.
+func (w *AtlasWallet) handleQueuedTx(req *walletTx) {
+	var err error
+	var txResp *sdk.TxResponse
 
 	for attempt := 0; attempt <= req.retries; attempt++ {
+
+		// on retry, pause for 1-3 seconds and refresh account sequence number
 		if attempt > 0 {
-			w.logger.Warn("Retrying queued transaction", zap.Int("attempt", attempt))
+			w.logger.Error("Transaction failed",
+				zap.String("tx_hash", txResp.TxHash),
+				zap.Error(err))
+
 			time.Sleep(time.Duration(attempt) * time.Second)
+			w.logger.Debug("Retrying queued transaction", zap.Int("attempt", attempt))
+
+			if refreshErr := w.refreshAccountInfo(context.Background()); refreshErr != nil {
+				w.logger.Error("Failed to refresh account info", zap.Error(refreshErr))
+			}
 		}
 
+		// broadcast transaction
 		ctx, cancel := context.WithTimeout(context.Background(), walletTxOpTimeout)
-		txResp, err := w.signAndBroadcastOnce(ctx, req.msgs...)
+		txResp, err = w.signAndBroadcastTx(ctx, req.msgs...)
 		cancel()
 		if err != nil {
-			lastErr = err
-			if w.isSequenceError(err) {
-				w.logger.Warn("Sequence error detected, refreshing account info", zap.Error(err))
-				if refreshErr := w.refreshAccountInfo(context.Background()); refreshErr != nil {
-					w.logger.Error("Failed to refresh account info", zap.Error(refreshErr))
-				}
-			}
 			continue
 		}
 
+		// increment local sequence number on successful broadcast
 		w.incrementSequence()
 
-		if !req.wait {
-			req.result <- walletTxResult{resp: txResp}
-			return
-		}
-
-		confirmedResp, confirmErr := w.waitForTxWithTimeout(txResp.TxHash, walletTxCommitTimeout)
-		if confirmErr != nil {
-			w.logger.Error("Transaction did not confirm before queue continued",
-				zap.String("tx_hash", txResp.TxHash),
-				zap.Error(confirmErr))
-			if refreshErr := w.refreshAccountInfo(context.Background()); refreshErr != nil {
-				w.logger.Error("Failed to refresh account info after confirmation error", zap.Error(refreshErr))
-			}
-			if req.wait {
-				req.result <- walletTxResult{resp: confirmedResp, err: confirmErr}
-			}
-			return
-		}
-
+		// if wait flag is true, wait for transaction block inclusion for real response
 		if req.wait {
-			req.result <- walletTxResult{resp: confirmedResp}
+			txResp, err = w.waitForTx(txResp.TxHash, walletTxCommitTimeout)
+			if err != nil {
+				continue
+			}
 		}
+
+		// trigger transaction completion in result channel, with no error since everything passed
+		req.result <- walletTxResult{resp: txResp, err: nil}
 		return
 	}
 
-	if lastErr != nil {
-		req.result <- walletTxResult{err: lastErr}
-		return
-	}
-	req.result <- walletTxResult{err: fmt.Errorf("failed after %d retries", req.retries)}
+	// trigger transaction completion in result channel, including the error that caused the last attempt to fail
+	req.result <- walletTxResult{resp: txResp, err: err}
 }
 
-func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
+// signAndBroadcastTx simulates the required gas, then builds, signs, encodes, and broadcasts the transaction.
+func (w *AtlasWallet) signAndBroadcastTx(ctx context.Context, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
 	accountNumber, sequence := w.accountInfo()
 
-	// Create transaction factory with proper settings
+	// create transaction factory
 	txf := tx.Factory{}.
 		WithTxConfig(w.clientCtx.TxConfig).
 		WithAccountRetriever(w.clientCtx.AccountRetriever).
 		WithChainID(w.clientCtx.ChainID).
-		WithGas(250000). // Default gas, will be adjusted by simulation
+		WithGas(250000). // default gas, though gas will be adjusted by simulation
 		WithGasAdjustment(w.gasAdjustment).
 		WithGasPrices(w.gasPrices).
 		WithKeybase(w.clientCtx.Keyring).
@@ -399,17 +362,11 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 		return nil, fmt.Errorf("GRPC connection not established - cannot simulate gas")
 	}
 
+	// determine gas required
 	_, adjusted, err := tx.CalculateGas(w.clientCtx, txf, msgs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to simulate gas: %w", err)
 	}
-
-	// w.logger.Debug("Gas simulation result",
-	// 	zap.Uint64("simulated_gas", simulatedGas.GasInfo.GasWanted),
-	// 	zap.Uint64("adjusted_gas", adjusted),
-	// 	zap.String("gas_prices", w.gasPrices),
-	// 	zap.Uint64("sequence", sequence))
-
 	txf = txf.WithGas(adjusted)
 
 	// build unsigned transaction
@@ -418,32 +375,50 @@ func (w *AtlasWallet) signAndBroadcastOnce(ctx context.Context, msgs ...sdk.Msg)
 		return nil, fmt.Errorf("failed to build tx: %w", err)
 	}
 
-	// sign the transaction
+	// sign
 	err = tx.Sign(ctx, txf, w.keyName, txb, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign tx: %w", err)
 	}
 
-	// Encode
+	// encode
 	txBytes, err := w.clientCtx.TxConfig.TxEncoder()(txb.GetTx())
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode tx: %w", err)
 	}
 
-	// Broadcast
-	return w.broadcastTxBytes(ctx, txBytes, false)
+	// broadcast
+	return w.broadcastTxBytes(ctx, txBytes)
 }
 
-// WaitForTx waits for transaction to be included in a block
-func (w *AtlasWallet) WaitForTx(txHash string) (*sdk.TxResponse, error) {
-	return w.waitForTxWithTimeout(txHash, walletTxOpTimeout)
+// broadcastTxBytes broadcasts encoded transaction bytes.
+func (w *AtlasWallet) broadcastTxBytes(ctx context.Context, txBytes []byte) (*sdk.TxResponse, error) {
+	if w.txClient == nil {
+		return nil, fmt.Errorf("tx client not initialized")
+	}
+
+	// configure broadcast with sync mode
+	broadcastReq := &sdktx.BroadcastTxRequest{
+		TxBytes: txBytes,
+		Mode:    sdktx.BroadcastMode_BROADCAST_MODE_SYNC,
+	}
+
+	// broadcast transaction
+	broadcastResp, err := w.txClient.BroadcastTx(ctx, broadcastReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to broadcast transaction: %w", err)
+	}
+
+	// return error on non-zero response code
+	if broadcastResp.TxResponse.Code != 0 {
+		return broadcastResp.TxResponse, fmt.Errorf("transaction failed (%d): %s", broadcastResp.TxResponse.Code, broadcastResp.TxResponse.RawLog)
+	}
+
+	return broadcastResp.TxResponse, nil
 }
 
-func (w *AtlasWallet) WaitForTxWithTimeout(txHash string, timeout time.Duration) (*sdk.TxResponse, error) {
-	return w.waitForTxWithTimeout(txHash, timeout)
-}
-
-func (w *AtlasWallet) waitForTxWithTimeout(txHash string, timeout time.Duration) (*sdk.TxResponse, error) {
+// waitForTx
+func (w *AtlasWallet) waitForTx(txHash string, timeout time.Duration) (*sdk.TxResponse, error) {
 	if w.txClient == nil {
 		return nil, fmt.Errorf("tx client not initialized")
 	}
@@ -476,45 +451,6 @@ func (w *AtlasWallet) waitForTxWithTimeout(txHash string, timeout time.Duration)
 			}
 			// Transaction not found yet, continue waiting
 		}
-	}
-}
-
-func (w *AtlasWallet) GetSequence() uint64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-
-	return w.sequence
-}
-
-func (w *AtlasWallet) GetAddress() string {
-	return w.address.String()
-}
-
-// broadcastTxBytes broadcasts encoded transaction bytes
-func (w *AtlasWallet) broadcastTxBytes(ctx context.Context, txBytes []byte, wait bool) (*sdk.TxResponse, error) {
-	if w.txClient == nil {
-		return nil, fmt.Errorf("tx client not initialized")
-	}
-
-	// broadcast with sync mode
-	broadcastReq := &sdktx.BroadcastTxRequest{
-		TxBytes: txBytes,
-		Mode:    sdktx.BroadcastMode_BROADCAST_MODE_SYNC,
-	}
-
-	broadcastResp, err := w.txClient.BroadcastTx(ctx, broadcastReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to broadcast transaction: %w", err)
-	}
-
-	if broadcastResp.TxResponse.Code != 0 {
-		return nil, fmt.Errorf("transaction failed: %s", broadcastResp.TxResponse.RawLog)
-	}
-
-	if wait {
-		return w.WaitForTx(broadcastResp.TxResponse.TxHash)
-	} else {
-		return broadcastResp.TxResponse, nil
 	}
 }
 

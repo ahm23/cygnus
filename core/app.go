@@ -140,11 +140,12 @@ func (app *App) Start() error {
 func (app *App) blockEventHandler(ctx context.Context, height int64) {
 	app.chainReceiver.OnNewBlock(ctx, height)
 
-	if height >= 0 && (height-1)%challengeRoundBlocks == 0 {
-		round := strconv.FormatInt(height/challengeRoundBlocks, 10)
-		if err := app.chainReceiver.OnStartProofRound(ctx, height, round); err != nil {
+	roundHeight := height - 1
+	if height >= 0 && roundHeight%challengeRoundBlocks == 0 {
+		round := strconv.FormatInt(roundHeight/challengeRoundBlocks, 10)
+		if err := app.chainReceiver.OnStartProofRound(ctx, roundHeight, round); err != nil {
 			app.log.Error("Challenge round poll handler failed",
-				zap.Int64("height", height),
+				zap.Int64("height", roundHeight),
 				zap.String("round", round),
 				zap.Error(err))
 		}

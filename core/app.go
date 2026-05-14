@@ -64,10 +64,9 @@ func NewApp(home string) (*App, error) {
 	apiServer.SetupRoutes(cfg, logger, am, sm)
 
 	receiver := &chainEventReceiver{
-		atlas:                 am,
-		storage:               sm,
-		logger:                logger,
-		pauseUploadsForProofs: cfg.APICfg.PauseUploadsForProofs,
+		atlas:   am,
+		storage: sm,
+		logger:  logger,
 	}
 	eventListener, err := atlas.NewEventListener(cfg, logger, receiver)
 	if err != nil {

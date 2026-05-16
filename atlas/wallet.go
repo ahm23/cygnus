@@ -320,7 +320,9 @@ func (w *AtlasWallet) handleQueuedTx(req *walletTx) {
 		}
 
 		// increment local sequence number on successful broadcast
-		w.incrementSequence()
+		w.mu.Lock()
+		w.sequence++
+		w.mu.Unlock()
 
 		// if wait flag is true, wait for transaction block inclusion for real response
 		if req.wait {
@@ -454,7 +456,7 @@ func (w *AtlasWallet) waitForTx(txHash string, timeout time.Duration) (*sdk.TxRe
 	}
 }
 
-// refreshAccountInfo fetches fresh account info from chain
+// refreshAccountInfo queries and refreshes account info.
 func (w *AtlasWallet) refreshAccountInfo(ctx context.Context) error {
 	accountNumber, sequence, err := w.queryAccountInfo(ctx)
 	if err != nil {
@@ -473,6 +475,7 @@ func (w *AtlasWallet) refreshAccountInfo(ctx context.Context) error {
 	return nil
 }
 
+// queryAccountInfo fetches the latest account info from chain.
 func (w *AtlasWallet) queryAccountInfo(ctx context.Context) (uint64, uint64, error) {
 	resp, err := w.queryClients.Auth.Account(ctx, &authtypes.QueryAccountRequest{
 		Address: w.address.String(),
@@ -490,44 +493,10 @@ func (w *AtlasWallet) queryAccountInfo(ctx context.Context) (uint64, uint64, err
 	return acc.GetAccountNumber(), acc.GetSequence(), nil
 }
 
-func (w *AtlasWallet) setAccountInfo(accountNumber, sequence uint64) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	w.accountNumber = accountNumber
-	if sequence > w.sequence {
-		w.sequence = sequence
-	}
-}
-
+// accountInfo is an atomic account info getter.
 func (w *AtlasWallet) accountInfo() (uint64, uint64) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
 	return w.accountNumber, w.sequence
-}
-
-func (w *AtlasWallet) incrementSequence() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	w.sequence++
-}
-
-func (w *AtlasWallet) isSequenceError(err error) bool {
-	errStr := err.Error()
-	// CosmosSDK sequence error patterns
-	sequenceErrors := []string{
-		"invalid sequence",
-		"wrong sequence",
-		"sequence mismatch",
-		"account sequence",
-	}
-
-	for _, seqErr := range sequenceErrors {
-		if strings.Contains(errStr, seqErr) {
-			return true
-		}
-	}
-	return false
 }

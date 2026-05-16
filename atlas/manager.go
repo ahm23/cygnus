@@ -4,24 +4,18 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/cosmos/cosmos-sdk/client"
-	cmtservice "github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"go.uber.org/zap"
-
-	storagetypes "atlas/x/storage/types"
-
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-
 	"google.golang.org/grpc"
 
-	// Import from your local blockchain
+	"github.com/cosmos/cosmos-sdk/client"
+	cmtservice "github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+
 	"atlas/app"
+	storagetypes "atlas/x/storage/types"
 
 	"cygnus/config"
 	"cygnus/types"
@@ -29,32 +23,25 @@ import (
 
 type AtlasManager struct {
 	cfg       *config.Config
-	logger    *zap.Logger
+	log       *zap.Logger
 	clientCtx client.Context
-	grpcConn  *grpc.ClientConn
 	cmtClient cmtservice.ServiceClient
 
+	Height       int64
 	Wallet       *AtlasWallet
 	QueryClients types.QueryClients
-	State        AtlasState
 }
 
-type AtlasState struct {
-	mu     sync.Mutex
-	Height int64
-}
-
-// MsgClients groups all message clients
 type MsgClients struct {
 	Bank    banktypes.MsgClient
 	Storage storagetypes.MsgClient
 }
 
 func NewAtlasManager(cfg *config.Config, logger *zap.Logger) (*AtlasManager, error) {
-	// Get encoding config from your blockchain
+	// use Atlas Protocol encoding config
 	encodingConfig := app.MakeEncodingConfig()
 
-	// Create client context
+	// create client context
 	clientCtx := client.Context{}.
 		WithHomeDir(cfg.HomeDir).
 		WithChainID(cfg.ChainCfg.ChainId).
@@ -70,40 +57,38 @@ func NewAtlasManager(cfg *config.Config, logger *zap.Logger) (*AtlasManager, err
 
 	registerAccountInterfaces(clientCtx.InterfaceRegistry)
 
-	// Initialize AtlasManager without GRPC connection first
+	// create new AtlasManager instance
 	am := &AtlasManager{
 		cfg:       cfg,
-		logger:    logger,
+		log:       logger,
 		clientCtx: clientCtx,
 	}
 
 	return am, nil
 }
 
-// ConnectGRPC establishes GRPC connection and initializes clients
+// ConnectGRPC establishes gRPC connection and initializes query clients.
 func (am *AtlasManager) ConnectGRPC() error {
-	// Create GRPC connection
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// establish gRPC connection
 	conn, err := grpc.DialContext(
 		ctx,
 		am.cfg.ChainCfg.GRPCAddr,
-		grpc.WithInsecure(), // Use grpc.WithTransportCredentials(insecure.NewCredentials()) for newer grpc
+		grpc.WithInsecure(), // TODO: use grpc.WithTransportCredentials(insecure.NewCredentials()) for newer grpc
 		grpc.WithBlock(),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to connect to GRPC endpoint: %w", err)
 	}
 
-	am.grpcConn = conn
 	am.cmtClient = cmtservice.NewServiceClient(conn)
-
 	am.clientCtx = am.clientCtx.WithGRPCClient(conn)
 
-	// Initialize query clients
+	// initialize query clients
 	am.QueryClients = types.QueryClients{
-		Auth:    authtypes.NewQueryClient(conn),
+		// Auth:    authtypes.NewQueryClient(conn),		// TODO: to be used for authz extensions?
 		Bank:    banktypes.NewQueryClient(conn),
 		Storage: storagetypes.NewQueryClient(conn),
 	}
@@ -111,21 +96,14 @@ func (am *AtlasManager) ConnectGRPC() error {
 	return nil
 }
 
+// ConnectWallet creates and initializes the wallet handler.
 func (am *AtlasManager) ConnectWallet() error {
-	return am.ConnectWalletWithKeyName("cygnus")
-}
-
-func (am *AtlasManager) ConnectWalletWithKeyName(keyName string) error {
-	return am.ConnectWalletWithKeyNameAndSource(keyName, am.cfg.HomeDir)
-}
-
-func (am *AtlasManager) ConnectWalletWithKeyNameAndSource(keyName, keySource string) error {
-	wallet, err := NewAtlasWalletWithKeyNameAndSource(am.cfg, am.logger, &am.clientCtx, &am.QueryClients, keyName, keySource)
+	wallet, err := NewAtlasWallet(am.cfg, am.log, &am.clientCtx, &am.QueryClients, "cygnus", am.cfg.HomeDir)
 	am.Wallet = wallet
 	return err
 }
 
-// === PollBlockHeight continously polls the block height at 2 second intervals
+// PollBlockHeight continously polls the block height at 2 second intervals.
 func (am *AtlasManager) PollBlockHeight(ctx context.Context, callback func(context.Context, int64)) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -139,26 +117,25 @@ func (am *AtlasManager) PollBlockHeight(ctx context.Context, callback func(conte
 
 		latestHeight, err := am.GetLatestBlockHeight(ctx)
 		if err != nil {
-			am.logger.Warn("Challenge round poll failed", zap.Error(err))
+			am.log.Warn("Challenge round poll failed", zap.Error(err))
 			continue
 		}
-		if latestHeight <= am.State.Height {
+		if latestHeight <= am.Height {
 			continue
 		}
 
-		atomic.StoreInt64(&am.State.Height, latestHeight)
-		am.logger.Debug("Block Height " + strconv.FormatInt(latestHeight, 10))
+		atomic.StoreInt64(&am.Height, latestHeight)
 		callback(ctx, latestHeight)
 	}
 }
 
-// === WaitForBlockHeight waits for a given block height to be reached
+// WaitForBlockHeight waits for a given block height to be reached.
 func (am *AtlasManager) WaitForBlockHeight(ctx context.Context, targetHeight int64) error {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
-		if am.State.Height >= targetHeight {
+		if am.Height >= targetHeight {
 			return nil
 		}
 
@@ -170,7 +147,7 @@ func (am *AtlasManager) WaitForBlockHeight(ctx context.Context, targetHeight int
 	}
 }
 
-// === GetLatestBlockHeight gets the latest block height via gRPC
+// GetLatestBlockHeight gets the latest block height via gRPC
 func (am *AtlasManager) GetLatestBlockHeight(ctx context.Context) (int64, error) {
 	res, err := am.cmtClient.GetLatestBlock(ctx, &cmtservice.GetLatestBlockRequest{})
 	if err != nil {
@@ -198,8 +175,7 @@ func (am *AtlasManager) Close() error {
 		am.Wallet.Stop()
 	}
 
-	if am.grpcConn != nil {
-		return am.grpcConn.Close()
-	}
+	am.clientCtx.GRPCClient.Close()
+
 	return nil
 }

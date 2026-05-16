@@ -3,7 +3,6 @@ package atlas
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/cometbft/cometbft/rpc/client/http"
@@ -17,14 +16,13 @@ const (
 	// Tx subscription: only specific file/subscription actions
 	queryTxActions = `tm.event='Tx' AND message.action='delete_file'`
 	// `(message.action='delete_file' ` +
-	// `OR message.action='create_file' ` +
-	// `OR message.action='create_subscription')`
+	// `OR message.action='create_file')`
 
-	// Cosmos SDK / module event keys
-	attrFileID       = "file_id"
+	// CosmosSDK module event keys
+	attrFID          = "fid"
 	eventTypeMessage = "message"
 
-	// Known actions from txs
+	// known actions from txs
 	actionDeleteFile = "delete_file"
 )
 
@@ -37,14 +35,13 @@ type ChainEventReceiver interface {
 // EventListener subscribes to tx events and dispatches them.
 type EventListener struct {
 	cfg      *config.Config
-	logger   *zap.Logger
+	log      *zap.Logger
 	receiver ChainEventReceiver
 
 	client *http.HTTP
 	done   chan struct{}
 }
 
-// NewEventListener ...
 func NewEventListener(cfg *config.Config, logger *zap.Logger, receiver ChainEventReceiver) (*EventListener, error) {
 	rpcAddr := strings.TrimSuffix(cfg.ChainCfg.RPCAddr, "/")
 	if !strings.HasPrefix(rpcAddr, "http://") && !strings.HasPrefix(rpcAddr, "https://") {
@@ -59,31 +56,28 @@ func NewEventListener(cfg *config.Config, logger *zap.Logger, receiver ChainEven
 
 	return &EventListener{
 		cfg:      cfg,
-		logger:   logger,
+		log:      logger,
 		receiver: receiver,
 		client:   client,
 		done:     make(chan struct{}),
 	}, nil
 }
 
-// Start begins the tx subscription and processes events.
+// Start begins the tx subscription and handles tx events.
 func (el *EventListener) Start(ctx context.Context) error {
-	el.logger.Info("[EventListener] Starting event listener...")
 	if err := el.client.Start(); err != nil {
-		return fmt.Errorf("atlas events: start rpc client: %w", err)
+		return fmt.Errorf("failed to start rpc client: %w", err)
 	}
 	defer el.client.Stop()
+	el.log.Info("Event listener started!")
 
-	// ── Tx subscription ────────────────────────────────────────────────────────
+	// tx subscription
 	txCh, err := el.client.Subscribe(ctx, "cygnus-tx-actions", queryTxActions, 128)
 	if err != nil {
-		return fmt.Errorf("subscribe tx actions: %w", err)
+		return fmt.Errorf("failed to subscribe to tx actions: %w", err)
 	}
-	defer func() { _ = el.client.Unsubscribe(ctx, "", "cygnus-tx-actions") }()
-
-	el.logger.Info("Subscribed to tx actions",
-		zap.String("rpc", el.cfg.ChainCfg.RPCAddr),
-		zap.String("tx_query", queryTxActions))
+	defer el.client.Unsubscribe(ctx, "", "cygnus-tx-actions")
+	el.log.Info("Subscribed to tx actions", zap.String("tx_query", queryTxActions))
 
 	for {
 		select {
@@ -111,39 +105,36 @@ func (el *EventListener) Stop() {
 	}
 }
 
-// ── Tx event handling ────────────────────────────────────────────────────────
+// handleTxEvent handles certain tx events appropriately.
 func (el *EventListener) handleTxEvent(ctx context.Context, result wstypes.ResultEvent) {
-	el.logger.Warn(fmt.Sprint(result) + "\n\n")
-	el.logger.Warn(fmt.Sprint(result.Events) + "\n\n")
 	events := result.Events
 	if events == nil {
 		return
 	}
 
-	fileID := getFileID(events)
-	if fileID == "" {
-		el.logger.Warn("Tx event without file_id", zap.Any("events", events))
+	fid := getFID(events)
+	if fid == "" {
+		el.log.Warn("Tx event without fid", zap.Any("events", events))
 		return
 	}
 
 	actionVals := events[eventTypeMessage+".action"]
 	if len(actionVals) == 0 {
-		el.logger.Warn("Tx event without message.action")
+		el.log.Warn("Tx event without message.action")
 		return
 	}
 	action := actionVals[0]
 
 	switch action {
 	case actionDeleteFile:
-		el.dispatchOrLog(ctx, "delete_file", fileID, el.receiver.OnFileDeleted(ctx, fileID))
+		el.receiver.OnFileDeleted(ctx, fid)
 	default:
-		el.logger.Warn("Unexpected tx action in filtered sub", zap.String("action", action))
+		el.log.Warn("Unexpected tx action in filtered subscription", zap.String("action", action))
 	}
 }
 
-// Helpers ─────────────────────────────────────────────────────────────────────
-func getFileID(events map[string][]string) string {
-	vals := events[actionDeleteFile+"."+attrFileID]
+func getFID(events map[string][]string) string {
+	vals := events[actionDeleteFile+"."+attrFID]
 	if len(vals) > 0 {
 		return vals[0]
 	}
@@ -156,39 +147,4 @@ func getFirstOrEmpty(events map[string][]string, key string) string {
 		return vals[0]
 	}
 	return ""
-}
-
-func (el *EventListener) dispatchOrLog(ctx context.Context, kind, id string, err error) {
-	if err != nil {
-		el.logger.Error("Handle event failed",
-			zap.String("kind", kind),
-			zap.String("id", id),
-			zap.Error(err))
-	} else {
-		el.logger.Info("Processed event",
-			zap.String("kind", kind),
-			zap.String("id", id))
-	}
-}
-
-// RPCWebSocketURL returns the WebSocket URL for the configured RPC (for reference).
-func RPCWebSocketURL(rpcAddr string) string {
-	rpcAddr = strings.TrimSuffix(rpcAddr, "/")
-	if rpcAddr == "" {
-		return ""
-	}
-	if !strings.HasPrefix(rpcAddr, "http://") && !strings.HasPrefix(rpcAddr, "https://") {
-		rpcAddr = "http://" + rpcAddr
-	}
-	u, err := url.Parse(rpcAddr)
-	if err != nil {
-		return rpcAddr + "/websocket"
-	}
-	if u.Scheme == "https" {
-		u.Scheme = "wss"
-	} else {
-		u.Scheme = "ws"
-	}
-	u.Path = "/websocket"
-	return u.String()
 }

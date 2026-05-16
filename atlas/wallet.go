@@ -72,15 +72,7 @@ const (
 	walletTxCommitTimeout = 2 * time.Minute
 )
 
-func NewAtlasWallet(cfg *config.Config, logger *zap.Logger, clientCtx *client.Context, queryClients *types.QueryClients) (*AtlasWallet, error) {
-	return NewAtlasWalletWithKeyName(cfg, logger, clientCtx, queryClients, "cygnus")
-}
-
-func NewAtlasWalletWithKeyName(cfg *config.Config, logger *zap.Logger, clientCtx *client.Context, queryClients *types.QueryClients, keyName string) (*AtlasWallet, error) {
-	return NewAtlasWalletWithKeyNameAndSource(cfg, logger, clientCtx, queryClients, keyName, cfg.HomeDir)
-}
-
-func NewAtlasWalletWithKeyNameAndSource(cfg *config.Config, logger *zap.Logger, clientCtx *client.Context, queryClients *types.QueryClients, keyName, keySource string) (*AtlasWallet, error) {
+func NewAtlasWallet(cfg *config.Config, logger *zap.Logger, clientCtx *client.Context, queryClients *types.QueryClients, keyName, keySource string) (*AtlasWallet, error) {
 	if strings.TrimSpace(keyName) == "" {
 		return nil, fmt.Errorf("key name cannot be empty")
 	}

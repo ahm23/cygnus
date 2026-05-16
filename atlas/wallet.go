@@ -77,7 +77,7 @@ func NewAtlasWallet(cfg *config.Config, logger *zap.Logger, clientCtx *client.Co
 		return nil, fmt.Errorf("key name cannot be empty")
 	}
 	if strings.TrimSpace(keySource) == "" {
-		keySource = cfg.HomeDir
+		keySource = cfg.HomeDirectory
 	}
 	keySource = os.ExpandEnv(keySource)
 

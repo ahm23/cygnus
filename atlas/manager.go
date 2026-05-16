@@ -43,7 +43,7 @@ func NewAtlasManager(cfg *config.Config, logger *zap.Logger) (*AtlasManager, err
 
 	// create client context
 	clientCtx := client.Context{}.
-		WithHomeDir(cfg.HomeDir).
+		WithHomeDirectory(cfg.HomeDirectory).
 		WithChainID(cfg.ChainCfg.ChainId).
 		WithInput(os.Stdin).
 		WithOutput(os.Stdout).
@@ -98,7 +98,7 @@ func (am *AtlasManager) ConnectGRPC() error {
 
 // ConnectWallet creates and initializes the wallet handler.
 func (am *AtlasManager) ConnectWallet() error {
-	wallet, err := NewAtlasWallet(am.cfg, am.log, &am.clientCtx, &am.QueryClients, "cygnus", am.cfg.HomeDir)
+	wallet, err := NewAtlasWallet(am.cfg, am.log, &am.clientCtx, &am.QueryClients, "cygnus", am.cfg.HomeDirectory)
 	am.Wallet = wallet
 	return err
 }

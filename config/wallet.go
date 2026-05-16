@@ -19,6 +19,12 @@ import (
 	"golang.org/x/term"
 )
 
+type WalletInfo struct {
+	Name      string `json:"name"`
+	Address   string `json:"address"`
+	CreatedAt string `json:"created_at"`
+}
+
 // InitWallet initializes a wallet
 func InitWallet(homeDir string) (*WalletInfo, error) {
 	// Load config first
@@ -28,7 +34,7 @@ func InitWallet(homeDir string) (*WalletInfo, error) {
 	}
 
 	// Create keyring using YOUR blockchain's encoding
-	kr, err := createKeyring(cfg.HomeDir, cfg.ChainCfg.KeyringBackend)
+	kr, err := createKeyring(homeDir, cfg.ChainCfg.KeyringBackend)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create keyring: %w", err)
 	}
@@ -284,7 +290,7 @@ func LoadWalletInfo(homeDir string) (*WalletInfo, error) {
 
 // GetKeyring returns a keyring instance for the given config
 func GetKeyring(cfg *Config) (keyring.Keyring, error) {
-	return createKeyring(cfg.HomeDir, cfg.ChainCfg.KeyringBackend)
+	return createKeyring(cfg.HomeDirectory, cfg.ChainCfg.KeyringBackend)
 }
 
 // VerifyWalletPassword verifies a wallet's password

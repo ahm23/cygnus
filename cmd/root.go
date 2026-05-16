@@ -44,7 +44,7 @@ and setting up a wallet. If a wallet already exists, it will be loaded.`,
 
 			// Expand home directory path
 			if home == "" {
-				homeDir, err := os.UserHomeDir()
+				homeDir, err := os.UserHomeDirectory()
 				if err != nil {
 					return fmt.Errorf("failed to get home directory: %w", err)
 				}
@@ -71,7 +71,7 @@ and setting up a wallet. If a wallet already exists, it will be loaded.`,
 			fmt.Println("\n" + "==============")
 			fmt.Println("Provider Initialization Complete!")
 			fmt.Println("===============")
-			fmt.Printf("Home Directory: %s\n", cfg.HomeDir)
+			fmt.Printf("Home Directory: %s\n", cfg.HomeDirectory)
 			fmt.Printf("Wallet: %s (%s)\n", walletInfo.Name, walletInfo.Address)
 			// fmt.Printf("Storage Path: %s\n", cfg.StoragePath)
 			// fmt.Printf("Max Storage: %d GB\n", cfg.MaxStorageGB)

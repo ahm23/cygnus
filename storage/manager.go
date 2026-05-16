@@ -339,7 +339,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 	defer file.Close()
 
 	tempPath := filePath + ".upload-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	ingest, err := streamFileToDiskAndCollectLeaves(file, tempPath, sm.config.APICfg.SyncUploads)
+	ingest, err := streamFileToDiskAndCollectLeaves(file, tempPath, sm.config.APICfg.FsyncUploads)
 	if err != nil {
 		return nil, err
 	}

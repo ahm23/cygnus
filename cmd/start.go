@@ -29,12 +29,6 @@ func StartCmd() *cobra.Command {
 				return err
 			}
 
-			maxRestartAttempt := 3
-			if maxRestartAttempt < 0 {
-				maxRestartAttempt = 0
-			}
-
-			// Set log level BEFORE creating the app to ensure debug logs are visible
 			switch logLevel {
 			case "info":
 				log.Logger = log.Logger.Level(zerolog.InfoLevel)
@@ -49,11 +43,12 @@ func StartCmd() *cobra.Command {
 				return err
 			}
 
+			// TODO: fix logging
 			err = app.Start()
-			for restartAttempt := 0; restartAttempt < maxRestartAttempt && err != nil; restartAttempt++ {
+			for restartAttempt := 1; restartAttempt <= 3 && err != nil; restartAttempt++ {
 				fmt.Println(err)
-				fmt.Printf("Attempting restart again in a minute (attempt %d of %d)...\n", restartAttempt+1, maxRestartAttempt)
-				time.Sleep(time.Minute)
+				fmt.Printf("Attempting restart again in %d seconds (attempt %d of %d)...\n", time.Second*5, restartAttempt, 3)
+				time.Sleep(time.Second * 5)
 				err = app.Start()
 			}
 

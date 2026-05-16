@@ -6,10 +6,10 @@ import (
 	"cygnus/storage"
 
 	"github.com/gofiber/fiber/v2"
-	"go.uber.org/zap"
+	"github.com/rs/zerolog"
 )
 
-func (a *API) SetupRoutes(cfg *config.Config, logger *zap.Logger, atlas *atlas.AtlasManager, storageManager *storage.StorageManager) {
+func (a *API) SetupRoutes(cfg *config.Config, logger zerolog.Logger, atlas *atlas.AtlasManager, storageManager *storage.StorageManager) {
 	handler := NewHandler(storageManager, logger, cfg)
 	middleware := Middleware{
 		AtlasQueryClients: &atlas.QueryClients,

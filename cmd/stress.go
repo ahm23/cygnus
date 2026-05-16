@@ -24,7 +24,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"github.com/zeebo/blake3"
-	"go.uber.org/zap"
+	"github.com/rs/zerolog"
 
 	storagetypes "atlas/x/storage/types"
 
@@ -194,11 +194,8 @@ func StressTestCmd() *cobra.Command {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			logger, err := zap.NewDevelopment()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = logger.Sync() }()
+			cw := zerolog.ConsoleWriter{Out: os.Stderr}
+			logger := zerolog.New(cw).Level(zerolog.DebugLevel).With().Timestamp().Caller().Logger()
 
 			if apiURL == "" {
 				apiURL = defaultStressAPIURL(cfg)

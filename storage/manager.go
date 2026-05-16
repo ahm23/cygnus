@@ -19,14 +19,14 @@ import (
 	"time"
 
 	merkletree "github.com/ahm23/go-merkletree-xxh"
-	"go.uber.org/zap"
+	"github.com/rs/zerolog"
 
 	storageTypes "atlas/x/storage/types"
 )
 
 type StorageManager struct {
 	config    *config.Config
-	logger    *zap.Logger
+	logger    zerolog.Logger
 	atlas     *atlas.AtlasManager
 	db        *PebbleStore
 	mu        sync.RWMutex
@@ -44,7 +44,7 @@ type StorageManager struct {
 	uploadProofPause atomic.Int64
 }
 
-func NewStorageManager(cfg *config.Config, logger *zap.Logger, atlas *atlas.AtlasManager) (*StorageManager, error) {
+func NewStorageManager(cfg *config.Config, logger zerolog.Logger, atlas *atlas.AtlasManager) (*StorageManager, error) {
 	dataDir := os.ExpandEnv(cfg.DataDirectory)
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, err
@@ -355,7 +355,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 		_ = os.Remove(tempPath)
 		return nil, err
 	}
-	// sm.logger.Info("Merkle tree created", zap.String("root_hash", hex.EncodeToString(tree.Root)))
+	// sm.logger.Info().Str("root_hash", hex.EncodeToString(tree.Root)).Msg("Merkle tree created")
 	// fmt.Println(tree)
 
 	if err := os.Rename(tempPath, filePath); err != nil {
@@ -403,11 +403,12 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 	sm.commitReservedFile()
 	committedReservation = true
 
-	// sm.logger.Info("File created successfully",
-	// 	zap.String("file_id", fileID),
-	// 	zap.Int64("size", metadata.Size),
-	// 	zap.Int("chunks", metadata.Chunks),
-	// 	zap.String("merkle_root", metadata.MerkleRoot))
+	// sm.logger.Info().
+	// 	Str("file_id", fileID).
+	// 	Int64("size", metadata.Size).
+	// 	Int("chunks", metadata.Chunks).
+	// 	Str("merkle_root", metadata.MerkleRoot).
+	// 	Msg("File created successfully")
 
 	return metadata, nil
 }
@@ -455,7 +456,7 @@ func (sm *StorageManager) DeleteFile(ctx context.Context, fileID string) error {
 
 	sm.recordDeletedFile(size)
 
-	sm.logger.Info("File deleted", zap.String("file_id", fileID))
+	sm.logger.Info().Str("file_id", fileID).Msg("File deleted")
 	return nil
 }
 
@@ -489,11 +490,12 @@ func (sm *StorageManager) ProveFile(ctx context.Context, fileID string, challeng
 		return err
 	}
 
-	// sm.logger.Info("Challenge proof submitted",
-	// 	zap.String("file_id", fileID),
-	// 	zap.String("challenge_id", challengeID),
-	// 	zap.Int64("chunk", chunk),
-	// 	zap.String("merkle_root", hex.EncodeToString(tree.Root)))
+	// sm.logger.Info().
+	// 	Str("file_id", fileID).
+	// 	Str("challenge_id", challengeID).
+	// 	Int64("chunk", chunk).
+	// 	Str("merkle_root", hex.EncodeToString(tree.Root)).
+	// 	Msg("Challenge proof submitted")
 
 	return nil
 }
@@ -576,9 +578,10 @@ func (sm *StorageManager) VerifyFileIntegrity(ctx context.Context, fileID *strin
 
 	if sm.atlas != nil && sm.atlas.QueryClients.Storage != nil {
 		if _, err := sm.atlas.QueryClients.Storage.File(ctx, &storageTypes.QueryFileRequest{Fid: *fileID}); err != nil {
-			sm.logger.Warn("Unable to verify file against chain state",
-				zap.String("file_id", *fileID),
-				zap.Error(err))
+			sm.logger.Warn().
+				Str("file_id", *fileID).
+				Err(err).
+				Msg("Unable to verify file against chain state")
 			return false, err
 		}
 		sm.RecordChainSync(time.Now().UTC())
@@ -646,15 +649,16 @@ func (sm *StorageManager) GetStatus() (*types.ProviderStatus, error) {
 
 func (sm *StorageManager) cleanupCreatedFile(ctx context.Context, fileID, filePath string) {
 	if err := sm.deleteFileData(ctx, fileID, filePath); err != nil {
-		sm.logger.Warn("Failed to clean up incomplete upload",
-			zap.String("file_id", fileID),
-			zap.Error(err))
+		sm.logger.Warn().
+			Str("file_id", fileID).
+			Err(err).
+			Msg("Failed to clean up incomplete upload")
 	}
 }
 
 func (sm *StorageManager) deleteFileData(ctx context.Context, fileID, filePath string) error {
 	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-		sm.logger.Error("Failed to delete file", zap.String("file_id", fileID), zap.Error(err))
+		sm.logger.Error().Str("file_id", fileID).Err(err).Msg("Failed to delete file")
 	}
 
 	fileKey := FileKey(fileID)
@@ -664,7 +668,7 @@ func (sm *StorageManager) deleteFileData(ctx context.Context, fileID, filePath s
 
 	merkleKey := MerkleKey(fileID)
 	if err := sm.db.Delete(ctx, merkleKey); err != nil {
-		sm.logger.Warn("Failed to delete merkle tree data", zap.String("file_id", fileID), zap.Error(err))
+		sm.logger.Warn().Str("file_id", fileID).Err(err).Msg("Failed to delete merkle tree data")
 	}
 
 	return nil

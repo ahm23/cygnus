@@ -14,7 +14,7 @@ import (
 	"cygnus/storage"
 
 	"github.com/cosmos/cosmos-sdk/types/query"
-	"go.uber.org/zap"
+	"github.com/rs/zerolog"
 )
 
 const (
@@ -28,7 +28,7 @@ const (
 type chainEventReceiver struct {
 	atlas             *atlas.AtlasManager
 	storage           *storage.StorageManager
-	logger            *zap.Logger
+	logger            zerolog.Logger
 	latestBlockHeight atomic.Int64
 	proofRoundMu      sync.Mutex
 	proofRounds       map[int64]struct{}
@@ -48,7 +48,7 @@ func (r *chainEventReceiver) OnFileDeleted(ctx context.Context, fileID string) e
 
 // === OnStartProofRound is an event handler for new proof round events
 func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64, round string) error {
-	r.logger.Debug("Started new challenge round", zap.String("round", round))
+	r.logger.Debug().Str("round", round).Msg("Started new challenge round")
 	challenges, err := r.queryProviderChallengesForRound(ctx, height, round)
 	if err != nil {
 		return err
@@ -71,31 +71,33 @@ func (r *chainEventReceiver) queryProviderChallengesForRound(ctx context.Context
 
 		current, skippedOld, skippedFuture, skippedInvalid := r.filterRoundChallenges(challenges, roundStartHeight)
 		minRound, maxRound, hasRound := challengeRoundBounds(challenges)
-		r.logger.Debug("Fetched challenges for round",
-			zap.Int("attempt", attempt),
-			zap.String("round", round),
-			zap.Int64("round_start_height", roundStartHeight),
-			zap.Int("challenge_count", len(challenges)),
-			zap.Int("current_round_challenges", len(current)),
-			zap.Int("skipped_old", skippedOld),
-			zap.Int("skipped_future", skippedFuture),
-			zap.Int("skipped_invalid", skippedInvalid),
-			zap.Int64("min_challenge_round", minRound),
-			zap.Int64("max_challenge_round", maxRound),
-			zap.Bool("has_challenge_rounds", hasRound))
+		r.logger.Debug().
+			Int("attempt", attempt).
+			Str("round", round).
+			Int64("round_start_height", roundStartHeight).
+			Int("challenge_count", len(challenges)).
+			Int("current_round_challenges", len(current)).
+			Int("skipped_old", skippedOld).
+			Int("skipped_future", skippedFuture).
+			Int("skipped_invalid", skippedInvalid).
+			Int64("min_challenge_round", minRound).
+			Int64("max_challenge_round", maxRound).
+			Bool("has_challenge_rounds", hasRound).
+			Msg("Fetched challenges for round")
 
 		if len(current) > 0 || attempt == challengeRoundQueryAttempts {
 			return challenges, nil
 		}
 
-		r.logger.Debug("Current-round challenges not visible yet; retrying challenge query",
-			zap.Int("attempt", attempt),
-			zap.String("round", round),
-			zap.Int64("round_start_height", roundStartHeight),
-			zap.Int("current_round_challenges", len(current)),
-			zap.Int("skipped_old", skippedOld),
-			zap.Int("skipped_future", skippedFuture),
-			zap.Int("skipped_invalid", skippedInvalid))
+		r.logger.Debug().
+			Int("attempt", attempt).
+			Str("round", round).
+			Int64("round_start_height", roundStartHeight).
+			Int("current_round_challenges", len(current)).
+			Int("skipped_old", skippedOld).
+			Int("skipped_future", skippedFuture).
+			Int("skipped_invalid", skippedInvalid).
+			Msg("Current-round challenges not visible yet; retrying challenge query")
 
 		select {
 		case <-ctx.Done():
@@ -144,30 +146,33 @@ func (r *chainEventReceiver) queryAllProviderChallenges(ctx context.Context) ([]
 
 func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundStartHeight int64, round string, challenges []*storageTypes.StorageChallenge) {
 	if len(challenges) == 0 {
-		r.logger.Info("No challenges to prove for proof round",
-			zap.Int64("height", roundStartHeight),
-			zap.String("round", round))
+		r.logger.Info().
+			Int64("height", roundStartHeight).
+			Str("round", round).
+			Msg("No challenges to prove for proof round")
 		return
 	}
 
 	currentHeight := maxInt64(r.latestBlockHeight.Load(), roundStartHeight)
 	challenges, skippedOld, skippedFuture, skippedInvalid := r.filterRoundChallenges(challenges, roundStartHeight)
 	if skippedOld > 0 || skippedFuture > 0 || skippedInvalid > 0 {
-		r.logger.Info("Dropped stale challenge proofs before scheduling",
-			zap.Int64("round_start_height", roundStartHeight),
-			zap.Int64("current_height", currentHeight),
-			zap.Int("skipped_old", skippedOld),
-			zap.Int("skipped_future", skippedFuture),
-			zap.Int("skipped_invalid", skippedInvalid),
-			zap.Int("remaining_challenges", len(challenges)))
+		r.logger.Info().
+			Int64("round_start_height", roundStartHeight).
+			Int64("current_height", currentHeight).
+			Int("skipped_old", skippedOld).
+			Int("skipped_future", skippedFuture).
+			Int("skipped_invalid", skippedInvalid).
+			Int("remaining_challenges", len(challenges)).
+			Msg("Dropped stale challenge proofs before scheduling")
 	}
 	if len(challenges) == 0 {
-		r.logger.Info("No current-round challenges to prove",
-			zap.Int64("round_height", roundStartHeight),
-			zap.String("round", round),
-			zap.Int("skipped_old", skippedOld),
-			zap.Int("skipped_future", skippedFuture),
-			zap.Int("skipped_invalid", skippedInvalid))
+		r.logger.Info().
+			Int64("round_height", roundStartHeight).
+			Str("round", round).
+			Int("skipped_old", skippedOld).
+			Int("skipped_future", skippedFuture).
+			Int("skipped_invalid", skippedInvalid).
+			Msg("No current-round challenges to prove")
 		return
 	}
 
@@ -192,25 +197,28 @@ func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundS
 		batches[targetHeight] = append(batches[targetHeight], challenge)
 	}
 	if skippedExpired > 0 {
-		r.logger.Info("Dropped expired challenge proofs before scheduling",
-			zap.Int64("current_height", currentHeight),
-			zap.Int("skipped_expired", skippedExpired),
-			zap.Int("remaining_challenges", len(challenges)-skippedExpired))
+		r.logger.Info().
+			Int64("current_height", currentHeight).
+			Int("skipped_expired", skippedExpired).
+			Int("remaining_challenges", len(challenges)-skippedExpired).
+			Msg("Dropped expired challenge proofs before scheduling")
 	}
 	if len(batches) == 0 {
-		r.logger.Info("No schedulable current-round challenges to prove",
-			zap.Int64("round_start_height", roundStartHeight),
-			zap.Int64("current_height", currentHeight),
-			zap.String("round", round))
+		r.logger.Info().
+			Int64("round_start_height", roundStartHeight).
+			Int64("current_height", currentHeight).
+			Str("round", round).
+			Msg("No schedulable current-round challenges to prove")
 		return
 	}
 
-	r.logger.Info("Scheduled challenge proofs across upcoming blocks",
-		zap.Int64("current_height", currentHeight),
-		zap.Int64("first_target_height", firstTargetHeight),
-		zap.Int64("last_target_height", lastTargetHeight),
-		zap.Int("challenge_count", len(challenges)-skippedExpired),
-		zap.Int("block_count", len(batches)))
+	r.logger.Info().
+		Int64("current_height", currentHeight).
+		Int64("first_target_height", firstTargetHeight).
+		Int64("last_target_height", lastTargetHeight).
+		Int("challenge_count", len(challenges)-skippedExpired).
+		Int("block_count", len(batches)).
+		Msg("Scheduled challenge proofs across upcoming blocks")
 
 	for targetHeight, batch := range batches {
 		targetHeight := targetHeight
@@ -228,37 +236,41 @@ func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, ro
 
 	// wait for the desired height to submit a batch of proofs
 	if err := r.atlas.WaitForBlockHeight(ctx, broadcastHeight); err != nil {
-		r.logger.Error("Failed waiting to submit scheduled challenge proofs",
-			zap.String("round", round),
-			zap.Int64("broadcast_height", broadcastHeight),
-			zap.Error(err))
+		r.logger.Error().
+			Str("round", round).
+			Int64("broadcast_height", broadcastHeight).
+			Err(err).
+			Msg("Failed waiting to submit scheduled challenge proofs")
 		return
 	}
 
-	r.logger.Debug("Submitting challenge proofs",
-		zap.Int("count", len(challenges)),
-		zap.Int64("height", broadcastHeight+1))
+	r.logger.Debug().
+		Int("count", len(challenges)).
+		Int64("height", broadcastHeight+1).
+		Msg("Submitting challenge proofs")
 
 	for _, challenge := range challenges {
 		// soft-check that challenge has not expired
 		currentHeight := r.latestBlockHeight.Load()
 		if !r.isChallengeProveableForRound(challenge, roundStartHeight, currentHeight) {
 			// Dev Note: this only happens when the provider is under extreme loads (typically long-rolling DDoS)
-			r.logger.Info("Dropping stale challenge",
-				zap.Int64("round_start_height", roundStartHeight),
-				zap.Int64("current_height", currentHeight),
-				zap.Int64("target_height", targetHeight),
-				zap.String("challenge_id", challenge.ChallengeId))
+			r.logger.Info().
+				Int64("round_start_height", roundStartHeight).
+				Int64("current_height", currentHeight).
+				Int64("target_height", targetHeight).
+				Str("challenge_id", challenge.ChallengeId).
+				Msg("Dropping stale challenge")
 			continue
 		}
 
 		// prove file (respond to the challenge)
 		err := r.storage.ProveFile(ctx, challenge.FileId, challenge.ChallengeId, int64(challenge.ChunkIndex))
 		if err != nil {
-			r.logger.Error("Failed to prove challenge",
-				zap.String("file_id", challenge.FileId),
-				zap.Int64("chunk", int64(challenge.ChunkIndex)),
-				zap.Error(err))
+			r.logger.Error().
+				Str("file_id", challenge.FileId).
+				Int64("chunk", int64(challenge.ChunkIndex)).
+				Err(err).
+				Msg("Failed to prove challenge")
 			continue
 		}
 	}

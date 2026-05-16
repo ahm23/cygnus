@@ -7,12 +7,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	cmtservice "github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	"github.com/rs/zerolog"
 
 	"atlas/app"
 	storagetypes "atlas/x/storage/types"
@@ -23,7 +23,7 @@ import (
 
 type AtlasManager struct {
 	cfg       *config.Config
-	log       *zap.Logger
+	log       zerolog.Logger
 	clientCtx client.Context
 	cmtClient cmtservice.ServiceClient
 
@@ -37,7 +37,7 @@ type MsgClients struct {
 	Storage storagetypes.MsgClient
 }
 
-func NewAtlasManager(cfg *config.Config, logger *zap.Logger) (*AtlasManager, error) {
+func NewAtlasManager(cfg *config.Config, logger zerolog.Logger) (*AtlasManager, error) {
 	// use Atlas Protocol encoding config
 	encodingConfig := app.MakeEncodingConfig()
 
@@ -103,6 +103,13 @@ func (am *AtlasManager) ConnectWallet() error {
 	return err
 }
 
+// TEMP: for stress test
+func (am *AtlasManager) ConnectWalletWithKeyNameAndSource(keyName, keySource string) error {
+	wallet, err := NewAtlasWallet(am.cfg, am.log, &am.clientCtx, &am.QueryClients, keyName, keySource)
+	am.Wallet = wallet
+	return err
+}
+
 // PollBlockHeight continously polls the block height at 2 second intervals.
 func (am *AtlasManager) PollBlockHeight(ctx context.Context, callback func(context.Context, int64)) {
 	ticker := time.NewTicker(2 * time.Second)
@@ -117,7 +124,7 @@ func (am *AtlasManager) PollBlockHeight(ctx context.Context, callback func(conte
 
 		latestHeight, err := am.GetLatestBlockHeight(ctx)
 		if err != nil {
-			am.log.Warn("Challenge round poll failed", zap.Error(err))
+			am.log.Warn().Err(err).Msg("Challenge round poll failed")
 			continue
 		}
 		if latestHeight <= am.Height {

@@ -8,16 +8,16 @@ import (
 	"cygnus/types"
 
 	"github.com/gofiber/fiber/v2"
-	"go.uber.org/zap"
+	"github.com/rs/zerolog"
 )
 
 type Handler struct {
 	storageManager *storage.StorageManager
-	logger         *zap.Logger
+	logger         zerolog.Logger
 	config         *config.Config
 }
 
-func NewHandler(storageManager *storage.StorageManager, logger *zap.Logger, cfg *config.Config) *Handler {
+func NewHandler(storageManager *storage.StorageManager, logger zerolog.Logger, cfg *config.Config) *Handler {
 	return &Handler{
 		storageManager: storageManager,
 		logger:         logger,
@@ -67,7 +67,7 @@ func (h *Handler) UploadFile(c *fiber.Ctx) error {
 
 	metadata, err := h.storageManager.CreateFile(c.Context(), fileID, fileHeader)
 	if err != nil {
-		h.logger.Error("Failed to upload file", zap.String("file_id", fileID), zap.Error(err))
+		h.logger.Error().Str("file_id", fileID).Err(err).Msg("Failed to upload file")
 		return respondError(c, fiber.StatusInternalServerError, err.Error())
 	}
 
@@ -80,7 +80,7 @@ func (h *Handler) ListFiles(c *fiber.Ctx) error {
 
 	files, err := h.storageManager.ListFiles(c.Context(), page, pageSize)
 	if err != nil {
-		h.logger.Error("Failed to list files", zap.Error(err))
+		h.logger.Error().Err(err).Msg("Failed to list files")
 		return respondError(c, fiber.StatusInternalServerError, "failed to list files")
 	}
 
@@ -123,7 +123,7 @@ func (h *Handler) HealthCheck(c *fiber.Ctx) error {
 func (h *Handler) GetStatus(c *fiber.Ctx) error {
 	status, err := h.storageManager.GetStatus()
 	if err != nil {
-		h.logger.Error("Failed to get provider status", zap.Error(err))
+		h.logger.Error().Err(err).Msg("Failed to get provider status")
 		return respondError(c, fiber.StatusInternalServerError, "failed to get provider status")
 	}
 

@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"go.uber.org/zap"
 
 	"cygnus/api"
 	"cygnus/atlas"
@@ -22,7 +22,7 @@ import (
 
 type App struct {
 	cfg            *config.Config
-	log            *zap.Logger
+	log            zerolog.Logger
 	home           string
 	api            *api.API
 	atlas          *atlas.AtlasManager
@@ -38,17 +38,15 @@ func NewApp(home string) (*App, error) {
 		return nil, err
 	}
 
-	logger, err := zap.NewDevelopment()
-	if err != nil {
-		return nil, err
-	}
+	cw := zerolog.ConsoleWriter{Out: os.Stderr}
+	logger := zerolog.New(cw).Level(zerolog.DebugLevel).With().Timestamp().Caller().Logger()
 
 	dataDir := os.ExpandEnv(cfg.DataDirectory)
 	if err := os.MkdirAll(dataDir, os.ModePerm); err != nil {
 		return nil, err
 	}
 
-	// === initialize managers
+	// initialize managers
 	am, err := atlas.NewAtlasManager(cfg, logger)
 	if err != nil {
 		return nil, err
@@ -59,7 +57,7 @@ func NewApp(home string) (*App, error) {
 		return nil, err
 	}
 
-	// === initialize api server & rpc socket listeners
+	// initialize api server & rpc socket listeners
 	apiServer := api.NewAPI(&cfg.APICfg)
 	apiServer.SetupRoutes(cfg, logger, am, sm)
 
@@ -101,7 +99,7 @@ func (app *App) Start() error {
 		return err
 	}
 
-	app.log.Info("Starting API Server...", zap.Int64("port", app.cfg.APICfg.Port))
+	app.log.Info().Int64("port", app.cfg.APICfg.Port).Msg("Starting API Server...")
 	go app.api.Serve()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -110,7 +108,7 @@ func (app *App) Start() error {
 	if app.eventListener != nil {
 		go func() {
 			if err := app.eventListener.Start(ctx); err != nil && ctx.Err() == nil {
-				app.log.Error("Chain event listener stopped with error", zap.Error(err))
+				app.log.Error().Err(err).Msg("Chain event listener stopped with error")
 			}
 		}()
 	}
@@ -144,10 +142,11 @@ func (app *App) blockEventHandler(ctx context.Context, height int64) {
 	if height >= 0 && roundHeight%challengeRoundBlocks == 0 {
 		round := strconv.FormatInt(roundHeight/challengeRoundBlocks, 10)
 		if err := app.chainReceiver.OnStartProofRound(ctx, roundHeight, round); err != nil {
-			app.log.Error("Challenge round poll handler failed",
-				zap.Int64("height", roundHeight),
-				zap.String("round", round),
-				zap.Error(err))
+			app.log.Error().
+				Int64("height", roundHeight).
+				Str("round", round).
+				Err(err).
+				Msg("Challenge round poll handler failed")
 		}
 	}
 }
@@ -162,7 +161,7 @@ func (app *App) ensureProviderRegistration(ctx context.Context) error {
 	if err != nil || res.Provider == nil {
 		log.Info().Err(err).Msg("Provider does not exist on network or is not connected...")
 		if err := initProviderOnChain(app.atlas.Wallet, app.cfg.Ip, app.cfg.TotalSpace); err != nil {
-			log.Error().Err(err)
+			log.Error().Err(err).Msg("")
 			return err
 		}
 		app.storageManager.RecordChainSync(time.Now().UTC())
@@ -170,22 +169,25 @@ func (app *App) ensureProviderRegistration(ctx context.Context) error {
 	}
 
 	app.storageManager.RecordChainSync(time.Now().UTC())
-	app.log.Info("Provider query result",
-		zap.String("address", res.Provider.Address),
-		zap.String("hostname", res.Provider.Hostname),
-		zap.Int64("created_at", res.Provider.CreatedAt),
-		zap.Int64("space_available", res.Provider.SpaceAvailable),
-		zap.Int64("space_used", res.Provider.SpaceUsed))
+	app.log.Info().
+		Str("address", res.Provider.Address).
+		Str("hostname", res.Provider.Hostname).
+		Int64("created_at", res.Provider.CreatedAt).
+		Int64("space_available", res.Provider.SpaceAvailable).
+		Int64("space_used", res.Provider.SpaceUsed).
+		Msg("Provider query result")
 
 	if res.Provider.Hostname != app.cfg.Ip {
-		app.log.Warn("Provider hostname differs from local config",
-			zap.String("chain_hostname", res.Provider.Hostname),
-			zap.String("configured_hostname", app.cfg.Ip))
+		app.log.Warn().
+			Str("chain_hostname", res.Provider.Hostname).
+			Str("configured_hostname", app.cfg.Ip).
+			Msg("Provider hostname differs from local config")
 	}
 	if res.Provider.SpaceAvailable > app.cfg.TotalSpace {
-		app.log.Warn("Configured total space is lower than on-chain available space",
-			zap.Int64("chain_space_available", res.Provider.SpaceAvailable),
-			zap.Int64("configured_total_space", app.cfg.TotalSpace))
+		app.log.Warn().
+			Int64("chain_space_available", res.Provider.SpaceAvailable).
+			Int64("configured_total_space", app.cfg.TotalSpace).
+			Msg("Configured total space is lower than on-chain available space")
 	}
 
 	return nil

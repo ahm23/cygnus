@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	
 	merkletree "github.com/ahm23/go-merkletree-xxh"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/rs/zerolog"
@@ -31,6 +30,7 @@ import (
 	storagetypes "atlas/x/storage/types"
 
 	"cygnus/atlas"
+	"cygnus/cmd/types"
 	"cygnus/config"
 	cygnustypes "cygnus/types"
 )
@@ -186,7 +186,7 @@ func StressTestCmd() *cobra.Command {
 			metrics.KeyName = keyName
 			metrics.KeySource = normalizedKeySource
 
-			home, err := cmd.Flags().GetString(FlagHome)
+			home, err := cmd.Flags().GetString(types.FlagHome)
 			if err != nil {
 				return err
 			}

@@ -1,13 +1,15 @@
 package cmd
 
 import (
-	"cygnus/config"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+
+	"cygnus/cmd/types"
+	"cygnus/config"
 )
 
 func InitCmd() *cobra.Command {
@@ -19,7 +21,7 @@ func InitCmd() *cobra.Command {
 		Example: `  cygnus init --home ~/.cygnus
   	cygnus init --home /path/to/provider`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			home, err := cmd.Flags().GetString(FlagHome)
+			home, err := cmd.Flags().GetString(types.FlagHome)
 			if err != nil {
 				return err
 			}
@@ -50,8 +52,7 @@ func InitCmd() *cobra.Command {
 		},
 	}
 
-	// Add flags
-	cmd.Flags().String(FlagHome, "", "Home directory for config and data (default: $HOME/.cygnus)")
+	cmd.Flags().String(types.FlagHome, "", "Home directory for config and data (default: $HOME/.cygnus)")
 
 	return cmd
 }

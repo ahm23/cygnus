@@ -102,8 +102,8 @@ func Init(home string) (*Config, error) {
 	if err := viper.Unmarshal(&config); err != nil {
 		return nil, err
 	}
-
-	log.Debug().Object("config", config)
+	config.HomeDirectory = home
+	log.Debug().Object("config", config).Msg("Configuration loaded!")
 
 	return &config, nil
 }

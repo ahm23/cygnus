@@ -7,7 +7,6 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -57,10 +56,11 @@ func NewApp(home string) (*App, error) {
 		return nil, err
 	}
 
-	// initialize api server & rpc socket listeners
+	// initialize api server
 	apiServer := api.NewAPI(&cfg.APICfg)
 	apiServer.SetupRoutes(cfg, logger, am, sm)
 
+	// initialize event listener
 	receiver := &chainEventReceiver{
 		atlas:   am,
 		storage: sm,
@@ -84,27 +84,40 @@ func NewApp(home string) (*App, error) {
 	}, nil
 }
 
+// Start starts the storage provider.
 func (app *App) Start() error {
+	defer app.storageManager.Close()
+	defer app.atlas.Close()
 	log.Info().Msg("Starting Cygnus...")
 	log.Debug().Object("config", app.cfg).Msg("cygnus config")
 
+	// create app context
+	ctx, cancel := context.WithCancel(context.Background())
+	app.eventCancel = cancel
+
+	// establish gRPC connection & initialize an Atlas Protocol wallet
 	if err := app.atlas.ConnectGRPC(); err != nil {
 		return err
 	}
 	if err := app.atlas.ConnectWallet(); err != nil {
 		return err
 	}
+	log.Debug().Msg("wallet connected")
 
-	if err := app.ensureProviderRegistration(context.Background()); err != nil {
+	// validate that the provider is registered on-chain
+	if err := app.ensureProviderRegistration(ctx); err != nil {
 		return err
 	}
 
-	app.log.Info().Int64("port", app.cfg.APICfg.Port).Msg("Starting API Server...")
+	// start Cygnus API server
 	go app.api.Serve()
+	defer app.api.Close()
+	log.Debug().Msg("api server started")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	app.eventCancel = cancel
+	// start Atlas Protocol block height polling
+	go app.atlas.PollBlockHeight(ctx, app.blockEventHandler)
 
+	// start Atlas event listener
 	if app.eventListener != nil {
 		go func() {
 			if err := app.eventListener.Start(ctx); err != nil && ctx.Err() == nil {
@@ -112,32 +125,33 @@ func (app *App) Start() error {
 			}
 		}()
 	}
-	go app.atlas.PollBlockHeight(ctx, app.blockEventHandler)
-	// go app.pollChallengeRounds(ctx)
+	log.Debug().Msg("atlas event listener started")
 
-	done := make(chan os.Signal, 1)
-	defer signal.Stop(done)
+	// create & configure shutdown signal
+	shutdown := make(chan os.Signal, 1)
+	defer signal.Stop(shutdown)
+	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
 
-	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
-	<-done
+	// await shutdown
+	log.Info().Msg("Cygnus is READY!")
+	<-shutdown
 
-	fmt.Println("Shutting cygnus down safely...")
-
+	// shutdown proceedure
+	log.Info().Msg("Shutting Cygnus down safely...")
 	if app.eventCancel != nil {
 		app.eventCancel()
 	}
 	if app.eventListener != nil {
 		app.eventListener.Stop()
 	}
-	_ = app.storageManager.Close()
-	_ = app.api.Close()
-	_ = app.atlas.Close()
 	return nil
 }
 
+// blockEventHandler is meant to be run at every height to handle
+// height-dependent actions such as challenge round start actions.
 func (app *App) blockEventHandler(ctx context.Context, height int64) {
 	app.chainReceiver.OnNewBlock(ctx, height)
-
+	// TODO: challengeRoundBlocks should not be a const. should get this value from chain params.
 	roundHeight := height - 1
 	if height >= 0 && roundHeight%challengeRoundBlocks == 0 {
 		round := strconv.FormatInt(roundHeight/challengeRoundBlocks, 10)
@@ -146,37 +160,42 @@ func (app *App) blockEventHandler(ctx context.Context, height int64) {
 				Int64("height", roundHeight).
 				Str("round", round).
 				Err(err).
-				Msg("Challenge round poll handler failed")
+				Msg("new challenge round handler failed")
 		}
 	}
 }
 
+// ensureProviderRegistration queries Atlas Protocol to determine whether this instance of Cygnus
+// is a registered provider on-chain.
 func (app *App) ensureProviderRegistration(ctx context.Context) error {
 	queryProviderParams := &storageTypes.QueryProviderRequest{
 		Address: app.atlas.Wallet.GetAddress(),
 	}
-	cl := app.atlas.QueryClients.Storage
 
-	res, err := cl.Provider(ctx, queryProviderParams)
-	if err != nil || res.Provider == nil {
-		log.Info().Err(err).Msg("Provider does not exist on network or is not connected...")
-		if err := initProviderOnChain(app.atlas.Wallet, app.cfg.Ip, app.cfg.TotalSpace); err != nil {
-			log.Error().Err(err).Msg("")
+	res, err := app.atlas.QueryClients.Storage.Provider(ctx, queryProviderParams)
+	if err != nil {
+		log.Info().Err(err).Msg("Failed to query storage provider information.")
+		return err
+	}
+
+	if res.Provider == nil {
+		log.Info().Err(err).Msg("Provider does not exist on network. Creating storage provider...")
+		if err := app.initProviderOnChain(); err != nil {
+			log.Error().Err(err).Msg("Failed to create storage provider:")
 			return err
 		}
-		app.storageManager.RecordChainSync(time.Now().UTC())
 		return nil
 	}
 
-	app.storageManager.RecordChainSync(time.Now().UTC())
-	app.log.Info().
+	app.log.Debug().
 		Str("address", res.Provider.Address).
 		Str("hostname", res.Provider.Hostname).
 		Int64("created_at", res.Provider.CreatedAt).
 		Int64("space_available", res.Provider.SpaceAvailable).
 		Int64("space_used", res.Provider.SpaceUsed).
-		Msg("Provider query result")
+		Msg("Provider information:")
 
+	// TODO: add a "run `cygnus sync` to sync local config to on-chain parameters", once cygnus sync is implemented
 	if res.Provider.Hostname != app.cfg.Ip {
 		app.log.Warn().
 			Str("chain_hostname", res.Provider.Hostname).
@@ -187,20 +206,21 @@ func (app *App) ensureProviderRegistration(ctx context.Context) error {
 		app.log.Warn().
 			Int64("chain_space_available", res.Provider.SpaceAvailable).
 			Int64("configured_total_space", app.cfg.TotalSpace).
-			Msg("Configured total space is lower than on-chain available space")
+			Msg("Configured total space is less than on-chain available space")
 	}
 
 	return nil
 }
 
-func initProviderOnChain(wallet *atlas.AtlasWallet, ip string, totalSpace int64) error {
+// initProviderOnChain registers the provider's information on-chain.
+func (app *App) initProviderOnChain() error {
 	msg := &storageTypes.MsgRegisterProvider{
-		Creator:  wallet.GetAddress(),
-		Hostname: ip,
-		Capacity: totalSpace,
+		Creator:  app.atlas.Wallet.GetAddress(),
+		Hostname: app.cfg.Ip,
+		Capacity: app.cfg.TotalSpace,
 	}
 
-	resp, err := wallet.BroadcastTxGrpc(3, true, msg)
+	resp, err := app.atlas.Wallet.BroadcastTxGrpc(3, true, msg)
 	if err != nil {
 		return fmt.Errorf("failed to broadcast transaction: %w", err)
 	}
@@ -208,6 +228,6 @@ func initProviderOnChain(wallet *atlas.AtlasWallet, ip string, totalSpace int64)
 		return fmt.Errorf("transaction failed: %s", resp.RawLog)
 	}
 
-	fmt.Printf("Provider registered! Tx hash: %s\n", resp.TxHash)
+	log.Info().Str("Tx Hash", resp.TxHash).Msg("Provider registered!")
 	return nil
 }

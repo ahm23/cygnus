@@ -17,10 +17,10 @@ type ChainConfig struct {
 }
 
 type APIConfig struct {
-	Port                  int64 `yaml:"port" mapstructure:"port"`
-	MaxUploadSize         int64 `yaml:"max_upload_size" mapstructure:"max_upload_size"`
-	PauseUploadsForProofs bool  `yaml:"pause_uploads_for_proofs" mapstructure:"pause_uploads_for_proofs"`
-	FsyncUploads          bool  `yaml:"fsync_uploads" mapstructure:"fsync_uploads"`
+	Port             int64 `yaml:"port" mapstructure:"port"`
+	MaxUploadSize    int64 `yaml:"max_upload_size" mapstructure:"max_upload_size"`
+	PrioritizeProofs bool  `yaml:"pause_uploads_for_proofs" mapstructure:"pause_uploads_for_proofs"`
+	FsyncUploads     bool  `yaml:"fsync_uploads" mapstructure:"fsync_uploads"`
 }
 
 type Config struct {
@@ -37,10 +37,10 @@ type Config struct {
 // DefaultAPIConfig returns the default APIConfig with preset ports & advanced options focused on efficiency.
 func DefaultAPIConfig() APIConfig {
 	return APIConfig{
-		Port:                  3333,
-		MaxUploadSize:         4 * 1024 * 1024 * 1024,
-		FsyncUploads:          false,
-		PauseUploadsForProofs: true,
+		Port:             3333,
+		MaxUploadSize:    4 * 1024 * 1024 * 1024,
+		FsyncUploads:     false,
+		PrioritizeProofs: true,
 	}
 }
 
@@ -76,9 +76,9 @@ func (c Config) MarshalZerologObject(e *zerolog.Event) {
 		Str("IP", c.Ip).
 		Int64("TotalSpace", c.TotalSpace).
 		Str("DataDirectory", c.DataDirectory).
-		Int64("APIPort", c.APICfg.Port).
-		Bool("APISyncUploads", c.APICfg.FsyncUploads).
-		Bool("APIPauseUploadsForProofs", c.APICfg.PauseUploadsForProofs)
+		Int64("API_Port", c.APICfg.Port).
+		Bool("API_FsyncUploads", c.APICfg.FsyncUploads).
+		Bool("API_PrioritizeProofs", c.APICfg.PrioritizeProofs)
 }
 
 // TODO: stray manager

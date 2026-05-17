@@ -3,11 +3,9 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"cygnus/config"
 
-	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -18,74 +16,8 @@ const (
 	FlagLogLevel = "log-level"
 
 	DefaultHome     = "$HOME/.cygnus"
-	DefaultLogLevel = "info"
+	DefaultLogLevel = "INFO"
 )
-
-func init() {
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
-	log.Logger = log.With().Caller().Logger()
-	log.Logger = log.Level(zerolog.InfoLevel)
-}
-
-func InitCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "init",
-		Short: "Initialize cygnus config folder and wallet",
-		Long: `Initialize the storage provider by creating configuration files
-and setting up a wallet. If a wallet already exists, it will be loaded.`,
-		Example: `  cygnus init --home ~/.cygnus
-  cygnus init --home /path/to/provider`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// Get home directory
-			home, err := cmd.Flags().GetString(FlagHome)
-			if err != nil {
-				return err
-			}
-
-			// Expand home directory path
-			if home == "" {
-				homeDir, err := os.UserHomeDirectory()
-				if err != nil {
-					return fmt.Errorf("failed to get home directory: %w", err)
-				}
-				home = filepath.Join(homeDir, ".cygnus")
-			}
-
-			fmt.Printf("Initializing provider at: %s\n", home)
-
-			// Initialize config
-			cfg, err := config.Init(home)
-			if err != nil {
-				return fmt.Errorf("failed to initialize config: %w", err)
-			}
-			fmt.Println("✓ Configuration initialized")
-
-			// Initialize wallet
-			walletInfo, err := config.InitWallet(home)
-			if err != nil {
-				return fmt.Errorf("failed to initialize wallet: %w", err)
-			}
-			fmt.Printf("✓ Wallet initialized: %s (%s)\n", walletInfo.Name, walletInfo.Address)
-
-			// Summary
-			fmt.Println("\n" + "==============")
-			fmt.Println("Provider Initialization Complete!")
-			fmt.Println("===============")
-			fmt.Printf("Home Directory: %s\n", cfg.HomeDirectory)
-			fmt.Printf("Wallet: %s (%s)\n", walletInfo.Name, walletInfo.Address)
-			// fmt.Printf("Storage Path: %s\n", cfg.StoragePath)
-			// fmt.Printf("Max Storage: %d GB\n", cfg.MaxStorageGB)
-			fmt.Println("===============")
-
-			return nil
-		},
-	}
-
-	// Add flags
-	cmd.Flags().String(FlagHome, "", "Home directory for config and data (default: $HOME/.cygnus)")
-
-	return cmd
-}
 
 func VersionCmd() *cobra.Command {
 	r := &cobra.Command{
@@ -127,7 +59,6 @@ func RootCmd() *cobra.Command {
 		panic(err)
 	}
 
-	// r.AddCommand(StartCmd(), wallet.WalletCmd(), InitCmd(), VersionCmd(), IPFSCmd(), ShutdownCmd(), database.DataCmd())
 	r.AddCommand(InitCmd(), VersionCmd(), StartCmd(), StressTestCmd())
 
 	return r

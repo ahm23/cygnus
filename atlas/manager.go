@@ -43,7 +43,7 @@ func NewAtlasManager(cfg *config.Config, logger zerolog.Logger) (*AtlasManager, 
 
 	// create client context
 	clientCtx := client.Context{}.
-		WithHomeDirectory(cfg.HomeDirectory).
+		WithHomeDir(cfg.HomeDirectory).
 		WithChainID(cfg.ChainCfg.ChainId).
 		WithInput(os.Stdin).
 		WithOutput(os.Stdout).

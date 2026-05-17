@@ -12,8 +12,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const defaultMaxRestartAttempt = 60
-
 func StartCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "start",

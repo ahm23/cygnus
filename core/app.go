@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"cygnus/api"
@@ -21,7 +20,6 @@ import (
 
 type App struct {
 	cfg            *config.Config
-	log            zerolog.Logger
 	home           string
 	api            *api.API
 	atlas          *atlas.AtlasManager
@@ -37,36 +35,32 @@ func NewApp(home string) (*App, error) {
 		return nil, err
 	}
 
-	cw := zerolog.ConsoleWriter{Out: os.Stderr}
-	logger := zerolog.New(cw).Level(zerolog.DebugLevel).With().Timestamp().Caller().Logger()
-
 	dataDir := os.ExpandEnv(cfg.DataDirectory)
 	if err := os.MkdirAll(dataDir, os.ModePerm); err != nil {
 		return nil, err
 	}
 
 	// initialize managers
-	am, err := atlas.NewAtlasManager(cfg, logger)
+	am, err := atlas.NewAtlasManager(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	sm, err := storage.NewStorageManager(cfg, logger, am)
+	sm, err := storage.NewStorageManager(cfg, am)
 	if err != nil {
 		return nil, err
 	}
 
 	// initialize api server
 	apiServer := api.NewAPI(&cfg.APICfg)
-	apiServer.SetupRoutes(cfg, logger, am, sm)
+	apiServer.SetupRoutes(cfg, am, sm)
 
 	// initialize event listener
 	receiver := &chainEventReceiver{
 		atlas:   am,
 		storage: sm,
-		logger:  logger,
 	}
-	eventListener, err := atlas.NewEventListener(cfg, logger, receiver)
+	eventListener, err := atlas.NewEventListener(cfg, receiver)
 	if err != nil {
 		log.Warn().Err(err).Msg("Chain event listener not started (RPC may be unavailable)")
 		eventListener = nil
@@ -74,7 +68,6 @@ func NewApp(home string) (*App, error) {
 
 	return &App{
 		cfg:            cfg,
-		log:            logger,
 		home:           home,
 		atlas:          am,
 		api:            apiServer,
@@ -121,7 +114,7 @@ func (app *App) Start() error {
 	if app.eventListener != nil {
 		go func() {
 			if err := app.eventListener.Start(ctx); err != nil && ctx.Err() == nil {
-				app.log.Error().Err(err).Msg("Chain event listener stopped with error")
+				log.Error().Err(err).Msg("Chain event listener stopped with error")
 			}
 		}()
 	}
@@ -156,7 +149,7 @@ func (app *App) blockEventHandler(ctx context.Context, height int64) {
 	if height >= 0 && roundHeight%challengeRoundBlocks == 0 {
 		round := strconv.FormatInt(roundHeight/challengeRoundBlocks, 10)
 		if err := app.chainReceiver.OnStartProofRound(ctx, roundHeight, round); err != nil {
-			app.log.Error().
+			log.Error().
 				Int64("height", roundHeight).
 				Str("round", round).
 				Err(err).
@@ -187,7 +180,7 @@ func (app *App) ensureProviderRegistration(ctx context.Context) error {
 		return nil
 	}
 
-	app.log.Debug().
+	log.Debug().
 		Str("address", res.Provider.Address).
 		Str("hostname", res.Provider.Hostname).
 		Int64("created_at", res.Provider.CreatedAt).
@@ -197,13 +190,13 @@ func (app *App) ensureProviderRegistration(ctx context.Context) error {
 
 	// TODO: add a "run `cygnus sync` to sync local config to on-chain parameters", once cygnus sync is implemented
 	if res.Provider.Hostname != app.cfg.Ip {
-		app.log.Warn().
+		log.Warn().
 			Str("chain_hostname", res.Provider.Hostname).
 			Str("configured_hostname", app.cfg.Ip).
 			Msg("Provider hostname differs from local config")
 	}
 	if res.Provider.SpaceAvailable > app.cfg.TotalSpace {
-		app.log.Warn().
+		log.Warn().
 			Int64("chain_space_available", res.Provider.SpaceAvailable).
 			Int64("configured_total_space", app.cfg.TotalSpace).
 			Msg("Configured total space is less than on-chain available space")

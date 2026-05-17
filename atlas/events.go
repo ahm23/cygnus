@@ -7,7 +7,7 @@ import (
 
 	"github.com/cometbft/cometbft/rpc/client/http"
 	wstypes "github.com/cometbft/cometbft/rpc/core/types"
-	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
 	"cygnus/config"
 )
@@ -35,14 +35,13 @@ type ChainEventReceiver interface {
 // EventListener subscribes to tx events and dispatches them.
 type EventListener struct {
 	cfg      *config.Config
-	log      zerolog.Logger
 	receiver ChainEventReceiver
 
 	client *http.HTTP
 	done   chan struct{}
 }
 
-func NewEventListener(cfg *config.Config, logger zerolog.Logger, receiver ChainEventReceiver) (*EventListener, error) {
+func NewEventListener(cfg *config.Config, receiver ChainEventReceiver) (*EventListener, error) {
 	rpcAddr := strings.TrimSuffix(cfg.ChainCfg.RPCAddr, "/")
 	if !strings.HasPrefix(rpcAddr, "http://") && !strings.HasPrefix(rpcAddr, "https://") {
 		rpcAddr = "http://" + rpcAddr
@@ -56,7 +55,6 @@ func NewEventListener(cfg *config.Config, logger zerolog.Logger, receiver ChainE
 
 	return &EventListener{
 		cfg:      cfg,
-		log:      logger,
 		receiver: receiver,
 		client:   client,
 		done:     make(chan struct{}),
@@ -69,7 +67,7 @@ func (el *EventListener) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start rpc client: %w", err)
 	}
 	defer el.client.Stop()
-	el.log.Info().Msg("Event listener started!")
+	log.Info().Msg("Event listener started!")
 
 	// tx subscription
 	txCh, err := el.client.Subscribe(ctx, "cygnus-tx-actions", queryTxActions, 128)
@@ -77,7 +75,7 @@ func (el *EventListener) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to subscribe to tx actions: %w", err)
 	}
 	defer el.client.Unsubscribe(ctx, "", "cygnus-tx-actions")
-	el.log.Info().Str("tx_query", queryTxActions).Msg("Subscribed to tx actions")
+	log.Info().Str("tx_query", queryTxActions).Msg("Subscribed to tx actions")
 
 	for {
 		select {
@@ -114,13 +112,13 @@ func (el *EventListener) handleTxEvent(ctx context.Context, result wstypes.Resul
 
 	fid := getFID(events)
 	if fid == "" {
-		el.log.Warn().Any("events", events).Msg("Tx event without fid")
+		log.Warn().Any("events", events).Msg("Tx event without fid")
 		return
 	}
 
 	actionVals := events[eventTypeMessage+".action"]
 	if len(actionVals) == 0 {
-		el.log.Warn().Msg("Tx event without message.action")
+		log.Warn().Msg("Tx event without message.action")
 		return
 	}
 	action := actionVals[0]
@@ -129,7 +127,7 @@ func (el *EventListener) handleTxEvent(ctx context.Context, result wstypes.Resul
 	case actionDeleteFile:
 		el.receiver.OnFileDeleted(ctx, fid)
 	default:
-		el.log.Warn().Str("action", action).Msg("Unexpected tx action in filtered subscription")
+		log.Warn().Str("action", action).Msg("Unexpected tx action in filtered subscription")
 	}
 }
 

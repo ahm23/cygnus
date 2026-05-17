@@ -9,8 +9,6 @@ import (
 
 	"cygnus/config"
 	"cygnus/types"
-
-	"github.com/rs/zerolog"
 )
 
 func newTestStorageManager(t *testing.T, totalSpace int64) *StorageManager {
@@ -21,7 +19,7 @@ func newTestStorageManager(t *testing.T, totalSpace int64) *StorageManager {
 		TotalSpace:    totalSpace,
 	}
 
-	sm, err := NewStorageManager(cfg, zerolog.Nop(), nil)
+	sm, err := NewStorageManager(cfg, nil)
 	if err != nil {
 		t.Fatalf("NewStorageManager returned error: %v", err)
 	}
@@ -44,7 +42,7 @@ func TestInitialUsageIgnoresPebbleIndexFiles(t *testing.T) {
 	sm, err := NewStorageManager(&config.Config{
 		DataDirectory: dataDir,
 		TotalSpace:    10,
-	}, zerolog.Nop(), nil)
+	}, nil)
 	if err != nil {
 		t.Fatalf("NewStorageManager returned error: %v", err)
 	}

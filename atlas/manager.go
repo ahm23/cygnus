@@ -12,7 +12,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client"
 	cmtservice "github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
 	"atlas/app"
 	storagetypes "atlas/x/storage/types"
@@ -23,7 +23,6 @@ import (
 
 type AtlasManager struct {
 	cfg       *config.Config
-	log       zerolog.Logger
 	clientCtx client.Context
 	cmtClient cmtservice.ServiceClient
 
@@ -37,7 +36,7 @@ type MsgClients struct {
 	Storage storagetypes.MsgClient
 }
 
-func NewAtlasManager(cfg *config.Config, logger zerolog.Logger) (*AtlasManager, error) {
+func NewAtlasManager(cfg *config.Config) (*AtlasManager, error) {
 	// use Atlas Protocol encoding config
 	encodingConfig := app.MakeEncodingConfig()
 
@@ -60,7 +59,6 @@ func NewAtlasManager(cfg *config.Config, logger zerolog.Logger) (*AtlasManager, 
 	// create new AtlasManager instance
 	am := &AtlasManager{
 		cfg:       cfg,
-		log:       logger,
 		clientCtx: clientCtx,
 	}
 
@@ -98,14 +96,14 @@ func (am *AtlasManager) ConnectGRPC() error {
 
 // ConnectWallet creates and initializes the wallet handler.
 func (am *AtlasManager) ConnectWallet() error {
-	wallet, err := NewAtlasWallet(am.cfg, am.log, &am.clientCtx, &am.QueryClients, "cygnus", am.cfg.HomeDirectory)
+	wallet, err := NewAtlasWallet(am.cfg, &am.clientCtx, &am.QueryClients, "cygnus", am.cfg.HomeDirectory)
 	am.Wallet = wallet
 	return err
 }
 
 // TEMP: for stress test
 func (am *AtlasManager) ConnectWalletWithKeyNameAndSource(keyName, keySource string) error {
-	wallet, err := NewAtlasWallet(am.cfg, am.log, &am.clientCtx, &am.QueryClients, keyName, keySource)
+	wallet, err := NewAtlasWallet(am.cfg, &am.clientCtx, &am.QueryClients, keyName, keySource)
 	am.Wallet = wallet
 	return err
 }
@@ -124,7 +122,7 @@ func (am *AtlasManager) PollBlockHeight(ctx context.Context, callback func(conte
 
 		latestHeight, err := am.GetLatestBlockHeight(ctx)
 		if err != nil {
-			am.log.Warn().Err(err).Msg("Challenge round poll failed")
+			log.Warn().Err(err).Msg("Challenge round poll failed")
 			continue
 		}
 		if latestHeight <= am.Height {

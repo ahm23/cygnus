@@ -20,11 +20,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	
 	merkletree "github.com/ahm23/go-merkletree-xxh"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/zeebo/blake3"
-	"github.com/rs/zerolog"
 
 	storagetypes "atlas/x/storage/types"
 
@@ -195,7 +197,7 @@ func StressTestCmd() *cobra.Command {
 			}
 
 			cw := zerolog.ConsoleWriter{Out: os.Stderr}
-			logger := zerolog.New(cw).Level(zerolog.DebugLevel).With().Timestamp().Caller().Logger()
+			log.Logger = zerolog.New(cw).Level(zerolog.DebugLevel).With().Timestamp().Caller().Logger()
 
 			if apiURL == "" {
 				apiURL = defaultStressAPIURL(cfg)
@@ -239,7 +241,7 @@ func StressTestCmd() *cobra.Command {
 				return err
 			}
 
-			am, err := atlas.NewAtlasManager(cfg, logger)
+			am, err := atlas.NewAtlasManager(cfg)
 			if err != nil {
 				return err
 			}

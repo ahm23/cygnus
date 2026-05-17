@@ -14,7 +14,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdktx "github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
-	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 
@@ -29,7 +29,6 @@ import (
 
 type AtlasWallet struct {
 	mu     sync.RWMutex
-	logger zerolog.Logger
 
 	kr           keyring.Keyring
 	clientCtx    *client.Context
@@ -72,7 +71,7 @@ const (
 	walletTxCommitTimeout = 2 * time.Minute
 )
 
-func NewAtlasWallet(cfg *config.Config, logger zerolog.Logger, clientCtx *client.Context, queryClients *types.QueryClients, keyName, keySource string) (*AtlasWallet, error) {
+func NewAtlasWallet(cfg *config.Config, clientCtx *client.Context, queryClients *types.QueryClients, keyName, keySource string) (*AtlasWallet, error) {
 	if strings.TrimSpace(keyName) == "" {
 		return nil, fmt.Errorf("key name cannot be empty")
 	}
@@ -127,7 +126,6 @@ func NewAtlasWallet(cfg *config.Config, logger zerolog.Logger, clientCtx *client
 
 	// Initialize AtlasManager without GRPC connection first
 	w := &AtlasWallet{
-		logger:       logger,
 		kr:           kr,
 		clientCtx:    clientCtx,
 		queryClients: queryClients,
@@ -291,16 +289,16 @@ func (w *AtlasWallet) handleQueuedTx(req *walletTx) {
 
 		// on retry, pause for 1-3 seconds and refresh account sequence number
 		if attempt > 0 {
-			w.logger.Error().
+			log.Error().
 				Str("tx_hash", txResp.TxHash).
 				Err(err).
 				Msg("Transaction failed")
 
 			time.Sleep(time.Duration(attempt) * time.Second)
-			w.logger.Debug().Int("attempt", attempt).Msg("Retrying queued transaction")
+			log.Debug().Int("attempt", attempt).Msg("Retrying queued transaction")
 
 			if refreshErr := w.refreshAccountInfo(context.Background()); refreshErr != nil {
-				w.logger.Error().Err(refreshErr).Msg("Failed to refresh account info")
+				log.Error().Err(refreshErr).Msg("Failed to refresh account info")
 			}
 		}
 
@@ -427,7 +425,7 @@ func (w *AtlasWallet) waitForTx(txHash string, timeout time.Duration) (*sdk.TxRe
 	for {
 		select {
 		case <-ctx.Done():
-			w.logger.Warn().
+			log.Warn().
 				Str("tx_hash", txHash).
 				Dur("timeout", timeout).
 				Msg("Timeout waiting for transaction")
@@ -437,7 +435,7 @@ func (w *AtlasWallet) waitForTx(txHash string, timeout time.Duration) (*sdk.TxRe
 			resp, err := w.txClient.GetTx(ctx, &sdktx.GetTxRequest{Hash: txHash})
 			if err == nil {
 				if resp.TxResponse.Code == 0 {
-					w.logger.Info().
+					log.Info().
 						Str("tx_hash", txHash).
 						Int64("height", resp.TxResponse.Height).
 						Msg("Transaction confirmed")
@@ -463,7 +461,7 @@ func (w *AtlasWallet) refreshAccountInfo(ctx context.Context) error {
 	w.sequence = sequence
 	w.mu.Unlock()
 
-	w.logger.Debug().
+	log.Debug().
 		Uint64("account_number", accountNumber).
 		Uint64("sequence", sequence).
 		Msg("Refreshed account info")

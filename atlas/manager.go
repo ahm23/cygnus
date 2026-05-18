@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -29,6 +30,9 @@ type AtlasManager struct {
 	Height       int64
 	Wallet       *AtlasWallet
 	QueryClients types.QueryClients
+
+	providerCache   map[string]string // address → hostname
+	providerCacheMu sync.RWMutex
 }
 
 type MsgClients struct {
@@ -58,8 +62,9 @@ func NewAtlasManager(cfg *config.Config) (*AtlasManager, error) {
 
 	// create new AtlasManager instance
 	am := &AtlasManager{
-		cfg:       cfg,
-		clientCtx: clientCtx,
+		cfg:           cfg,
+		clientCtx:     clientCtx,
+		providerCache: make(map[string]string),
 	}
 
 	return am, nil
@@ -191,6 +196,43 @@ func (am *AtlasManager) GetLatestBlockHeight(ctx context.Context) (int64, error)
 	}
 
 	return 0, fmt.Errorf("latest block response did not include a block height")
+}
+
+// RefreshProviders queries all registered storage providers and updates the
+// local cache (address → hostname). Called at startup and at every proof window
+// start to keep the cache fresh.
+func (am *AtlasManager) RefreshProviders(ctx context.Context) error {
+	if am.QueryClients.Storage == nil {
+		return fmt.Errorf("storage query client not connected")
+	}
+
+	resp, err := am.QueryClients.Storage.Providers(ctx, &storagetypes.QueryProvidersRequest{})
+	if err != nil {
+		return fmt.Errorf("failed to query providers: %w", err)
+	}
+
+	cache := make(map[string]string, len(resp.Providers))
+	for _, p := range resp.Providers {
+		if p != nil {
+			cache[p.Address] = p.Hostname
+		}
+	}
+
+	am.providerCacheMu.Lock()
+	am.providerCache = cache
+	am.providerCacheMu.Unlock()
+
+	log.Debug().Int("providers", len(cache)).Msg("Provider cache refreshed")
+	return nil
+}
+
+// GetProviderHostname returns the cached hostname for a provider address.
+// Returns false if the address is not in the cache.
+func (am *AtlasManager) GetProviderHostname(address string) (string, bool) {
+	am.providerCacheMu.RLock()
+	defer am.providerCacheMu.RUnlock()
+	h, ok := am.providerCache[address]
+	return h, ok
 }
 
 // Close closes the GRPC connection

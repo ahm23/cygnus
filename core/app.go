@@ -69,7 +69,7 @@ func NewApp(home string) (*App, error) {
 	}
 
 	// initialize stray-file sweeper (nil lister until chain query is wired)
-	straySweeper := NewStraySweeper(&cfg.StraySweep, sm, am, nil)
+	straySweeper := NewStraySweeper(&cfg.StraySweep, sm, am)
 
 	return &App{
 		cfg:            cfg,
@@ -131,6 +131,11 @@ func (app *App) Start() error {
 	}
 	log.Debug().Msg("atlas event listener started")
 
+	// initial provider cache refresh
+	if err := app.atlas.RefreshProviders(ctx); err != nil {
+		log.Warn().Err(err).Msg("Initial provider cache refresh failed")
+	}
+
 	// start stray-file sweeper
 	if app.straySweeper != nil {
 		go app.straySweeper.Run(ctx)
@@ -177,6 +182,14 @@ func (app *App) blockEventHandler(ctx context.Context, height int64) {
 	proofRoundBlocks := int64(app.cfg.ChainCfg.ProofRoundBlocks)
 	if proofRoundBlocks == 0 {
 		proofRoundBlocks = 180
+	}
+	proofWindowBlocks := int64(app.cfg.ChainCfg.ProofWindowBlocks)
+
+	// refresh provider cache at proof window boundaries
+	if proofWindowBlocks > 0 && height > 0 && height%proofWindowBlocks == 0 {
+		if err := app.atlas.RefreshProviders(ctx); err != nil {
+			log.Warn().Err(err).Msg("Provider cache refresh failed at window boundary")
+		}
 	}
 
 	roundHeight := height - 1

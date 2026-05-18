@@ -87,9 +87,28 @@ func (s *StraySweeper) sweep(ctx context.Context) {
 		return
 	}
 
-	providerAddr := ""
-	if s.am.Wallet != nil {
-		providerAddr = s.am.Wallet.GetAddress()
+	if s.am.Wallet == nil {
+		log.Warn().Msg("Stray sweeper: wallet not connected")
+		return
+	}
+	providerAddr := s.am.Wallet.GetAddress()
+
+	// Filter out files already held by this provider.
+	files := make([]*storageTypes.File, 0, len(resp.Files))
+	for _, f := range resp.Files {
+		alreadyHeld := false
+		for _, p := range f.Providers {
+			if p == providerAddr {
+				alreadyHeld = true
+				break
+			}
+		}
+		if !alreadyHeld {
+			files = append(files, f)
+		}
+	}
+	if len(files) == 0 {
+		return
 	}
 
 	// score each file deterministically so different providers
@@ -98,8 +117,8 @@ func (s *StraySweeper) sweep(ctx context.Context) {
 		file  *storageTypes.File
 		score uint64
 	}
-	scored := make([]scoredFile, len(resp.Files))
-	for i, f := range resp.Files {
+	scored := make([]scoredFile, len(files))
+	for i, f := range files {
 		scored[i] = scoredFile{file: f, score: claimScore(f.Fid, providerAddr)}
 	}
 	sort.Slice(scored, func(i, j int) bool {
@@ -113,7 +132,7 @@ func (s *StraySweeper) sweep(ctx context.Context) {
 	}
 
 	log.Debug().
-		Int("stray_files", len(resp.Files)).
+		Int("stray_files", len(files)).
 		Int("candidates", len(scored)).
 		Msg("Stray sweep scoring complete")
 

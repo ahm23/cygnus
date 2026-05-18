@@ -382,9 +382,11 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 		return nil, fmt.Errorf("failed to store metadata: %w", err)
 	}
 
-	if err := sm.cacheMerkleTree(ctx, fileID, tree, ingest.Size, ingest.Chunks); err != nil {
-		sm.cleanupCreatedFile(ctx, fileID, filePath)
-		return nil, fmt.Errorf("failed to save merkle metadata: %w", err)
+	if sm.config.CacheMerkleTrees {
+		if err := sm.cacheMerkleTree(ctx, fileID, tree); err != nil {
+			sm.cleanupCreatedFile(ctx, fileID, filePath)
+			return nil, fmt.Errorf("failed to save merkle metadata: %w", err)
+		}
 	}
 
 	proof, err := sm.generateProof(tree, 0)
@@ -467,9 +469,15 @@ func (sm *StorageManager) ProveFile(ctx context.Context, fileID string, challeng
 		return fmt.Errorf("chunk index must be non-negative")
 	}
 
-	tree, _, err := sm.buildMerkleTreeFromFile(ctx, filePath)
-	if err != nil {
-		return fmt.Errorf("failed to rebuild merkle tree for %s: %w", fileID, err)
+	var tree *merkletree.MerkleTree
+	if sm.config.CacheMerkleTrees {
+		tree, err = sm.loadCachedMerkleTree(ctx, fileID)
+	}
+	if tree == nil {
+		tree, _, err = sm.buildMerkleTreeFromFile(ctx, filePath)
+		if err != nil {
+			return fmt.Errorf("failed to rebuild merkle tree for %s: %w", fileID, err)
+		}
 	}
 
 	proof, err := sm.generateProof(tree, chunk)

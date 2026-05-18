@@ -31,9 +31,10 @@ type Config struct {
 	ChainCfg      ChainConfig `yaml:"chain_config" mapstructure:"chain_config"`
 	APICfg        APIConfig   `yaml:"api_config" mapstructure:"api_config"`
 
-	ProviderName string `yaml:"provider_name" mapstructure:"provider_name"`
-	Ip           string `yaml:"domain" mapstructure:"domain"`
-	TotalSpace   int64  `yaml:"total_bytes_offered" mapstructure:"total_bytes_offered"`
+	ProviderName     string `yaml:"provider_name" mapstructure:"provider_name"`
+	Ip               string `yaml:"domain" mapstructure:"domain"`
+	TotalSpace       int64  `yaml:"total_bytes_offered" mapstructure:"total_bytes_offered"`
+	CacheMerkleTrees bool   `yaml:"cache_merkle_trees" mapstructure:"cache_merkle_trees"`
 }
 
 // DefaultAPIConfig returns the default APIConfig with preset ports & advanced options focused on efficiency.
@@ -60,10 +61,11 @@ func DefaultChainConfig() ChainConfig {
 
 func DefaultConfig() *Config {
 	return &Config{
-		ProviderName:  "My First Provider",
-		Ip:            "localhost",
-		TotalSpace:    10 * 1024 * 1024 * 1024,
-		DataDirectory: "$HOME/.cygnus/data",
+		ProviderName:     "My First Provider",
+		Ip:               "localhost",
+		TotalSpace:       10 * 1024 * 1024 * 1024,
+		DataDirectory:    "$HOME/.cygnus/data",
+		CacheMerkleTrees: true,
 
 		ChainCfg: DefaultChainConfig(),
 		APICfg:   DefaultAPIConfig(),
@@ -80,7 +82,8 @@ func (c Config) MarshalZerologObject(e *zerolog.Event) {
 		Str("DataDirectory", c.DataDirectory).
 		Int64("API_Port", c.APICfg.Port).
 		Bool("API_FsyncUploads", c.APICfg.FsyncUploads).
-		Bool("API_PrioritizeProofs", c.APICfg.PrioritizeProofs)
+		Bool("API_PrioritizeProofs", c.APICfg.PrioritizeProofs).
+		Bool("CacheMerkleTrees", c.CacheMerkleTrees)
 }
 
 // TODO: stray manager

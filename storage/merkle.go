@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
 	merkletree "github.com/ahm23/go-merkletree-xxh"
 	"github.com/zeebo/blake3"
@@ -93,16 +92,56 @@ func (sm *StorageManager) buildMerkleTreeFromFile(ctx context.Context, filePath 
 	return sm.buildMerkleTreeFromReader(ctx, file)
 }
 
-func (sm *StorageManager) cacheMerkleTree(ctx context.Context, fileID string, tree *merkletree.MerkleTree, fileSize int64, chunks int) error {
+// cacheMerkleTree persists a merkle tree's leaf hashes and root hash.
+func (sm *StorageManager) cacheMerkleTree(ctx context.Context, fileID string, tree *merkletree.MerkleTree) error {
+	leaves := make([]string, len(tree.Leaves))
+	for i, leaf := range tree.Leaves {
+		leaves[i] = hex.EncodeToString(leaf)
+	}
+
 	treeData := map[string]interface{}{
-		"root_hash":   hex.EncodeToString(tree.Root),
-		"file_size":   fileSize,
-		"chunk_count": chunks,
-		"timestamp":   time.Now().UTC(),
+		"root_hash": hex.EncodeToString(tree.Root),
+		"leaves":    leaves,
 	}
 
 	key := MerkleKey(fileID)
 	return sm.db.SetHash(ctx, key, treeData)
+}
+
+// loadCachedMerkleTree reconstructs a Merkle tree from cached leaf hashes.
+// Returns an error if the cache entry is missing, has no leaves, or decoding fails.
+func (sm *StorageManager) loadCachedMerkleTree(ctx context.Context, fileID string) (*merkletree.MerkleTree, error) {
+	key := MerkleKey(fileID)
+
+	hashData, err := sm.db.GetHash(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+
+	leavesRaw, ok := hashData["leaves"]
+	if !ok {
+		return nil, fmt.Errorf("merkle cache for %s has no stored leaves", fileID)
+	}
+
+	leavesList, ok := leavesRaw.([]interface{})
+	if !ok || len(leavesList) == 0 {
+		return nil, fmt.Errorf("merkle cache for %s has invalid or empty leaves", fileID)
+	}
+
+	leaves := make([][]byte, len(leavesList))
+	for i, l := range leavesList {
+		leafStr, ok := l.(string)
+		if !ok {
+			return nil, fmt.Errorf("merkle cache for %s: leaf %d is not a string", fileID, i)
+		}
+		leafBytes, err := hex.DecodeString(leafStr)
+		if err != nil {
+			return nil, fmt.Errorf("merkle cache for %s: leaf %d decode error: %w", fileID, i, err)
+		}
+		leaves[i] = leafBytes
+	}
+
+	return buildMerkleTreeFromLeaves(leaves)
 }
 
 // BuildMerkleTree is kept for local verification and tests.

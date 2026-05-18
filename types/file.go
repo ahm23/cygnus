@@ -23,11 +23,12 @@ type FileMetadata struct {
 	FileName string `json:"filename"`
 	Size     int64  `json:"size"`
 	// MimeType    string    `json:"mime_type"`
-	Chunks      int       `json:"chunks"`
-	MerkleRoot  string    `json:"merkle_root"`
-	UploadedAt  time.Time `json:"uploaded_at"`
-	Owner       string    `json:"owner"` // Wallet address
-	IsAvailable bool      `json:"is_available"`
+	Chunks       int       `json:"chunks"`
+	MerkleRoot   string    `json:"merkle_root"`
+	UploadedAt   time.Time `json:"uploaded_at"`
+	Owner        string    `json:"owner"` // Wallet address
+	IsAvailable  bool      `json:"is_available"`
+	LastProvedAt time.Time `json:"last_proved_at,omitempty"`
 }
 
 type FileListResponse struct {

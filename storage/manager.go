@@ -297,7 +297,9 @@ func (sm *StorageManager) submitProof(ctx context.Context, fileID, challengeID s
 		}
 	}
 
-	sm.recordProofActivity(time.Now().UTC())
+	now := time.Now().UTC()
+	sm.recordProofActivity(now)
+	sm.updateFileProofTime(ctx, fileID, now)
 	return nil
 }
 
@@ -690,6 +692,19 @@ func (sm *StorageManager) GetFileMetadata(ctx context.Context, fileID string) (*
 		return nil, err
 	}
 	return &metadata, nil
+}
+
+// updateFileProofTime updates the stored LastProvedAt for a file after a successful proof submission.
+func (sm *StorageManager) updateFileProofTime(ctx context.Context, fileID string, at time.Time) {
+	metadata, err := sm.GetFileMetadata(ctx, fileID)
+	if err != nil {
+		log.Warn().Str("file_id", fileID).Err(err).Msg("Failed to read metadata for proof-time update")
+		return
+	}
+	metadata.LastProvedAt = at
+	if err := sm.storeMetadata(ctx, metadata); err != nil {
+		log.Warn().Str("file_id", fileID).Err(err).Msg("Failed to persist proof-time update")
+	}
 }
 
 func (sm *StorageManager) Close() error {

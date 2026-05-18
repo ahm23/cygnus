@@ -212,6 +212,7 @@ func (s *StraySweeper) claimOne(ctx context.Context, entry StrayFileEntry) {
 // Lower scores are claimed first. Different (fileID, provider) pairs produce
 // different orderings, naturally distributing files across providers.
 func claimScore(fileID, providerAddr string) uint64 {
+	// TODO: can I use XXH3 instead?
 	h := blake3.New()
 	_, _ = h.Write([]byte(fileID))
 	_, _ = h.Write([]byte(providerAddr))

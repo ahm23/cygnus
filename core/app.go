@@ -58,8 +58,9 @@ func NewApp(home string) (*App, error) {
 
 	// initialize event listener
 	receiver := &chainEventReceiver{
-		atlas:   am,
-		storage: sm,
+		atlas:       am,
+		storage:     sm,
+		proofRounds: make(map[int64]struct{}),
 	}
 	eventListener, err := atlas.NewEventListener(cfg, receiver)
 	if err != nil {
@@ -133,6 +134,20 @@ func (app *App) Start() error {
 	// start stray-file sweeper
 	if app.straySweeper != nil {
 		go app.straySweeper.Run(ctx)
+	}
+
+	// catch up on any missed challenge round after restart
+	{
+		currentHeight, err := app.atlas.GetLatestBlockHeight(ctx)
+		if err == nil {
+			proofRoundBlocks := int64(app.cfg.ChainCfg.ProofRoundBlocks)
+			if proofRoundBlocks == 0 {
+				proofRoundBlocks = 180
+			}
+			app.chainReceiver.catchUpChallengeRound(ctx, currentHeight, proofRoundBlocks)
+		} else {
+			log.Warn().Err(err).Msg("Failed to get current height for challenge round catch-up")
+		}
 	}
 
 	// create & configure shutdown signal

@@ -68,6 +68,21 @@ func (r *chainEventReceiver) OnProposalPassed(ctx context.Context, proposalID ui
 
 // OnStartProofRound is an event handler for new proof round events.
 func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64, round string) error {
+	// Skip if catch-up already processed this round.
+	r.proofRoundMu.Lock()
+	_, exists := r.proofRounds[height]
+	if !exists {
+		r.proofRounds[height] = struct{}{}
+	}
+	r.proofRoundMu.Unlock()
+	if exists {
+		log.Debug().
+			Int64("round_start", height).
+			Str("round", round).
+			Msg("Proof round already processed by catch-up; skipping")
+		return nil
+	}
+
 	log.Debug().Str("round", round).Msg("Started new challenge round")
 	challenges, err := r.queryProviderChallengesForRound(ctx, height, round)
 	if err != nil {
@@ -77,6 +92,51 @@ func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64
 	r.scheduleChallengeProofs(ctx, height, round, challenges)
 
 	return nil
+}
+
+// catchUpChallengeRound queries challenges for the ongoing challenge round and schedules proofs.
+// This is called on startup to recover missed rounds when the provider restarts mid-round.
+func (r *chainEventReceiver) catchUpChallengeRound(ctx context.Context, currentHeight int64, proofRoundBlocks int64) {
+	roundStartHeight := (currentHeight / proofRoundBlocks) * proofRoundBlocks
+	if roundStartHeight <= 0 {
+		return
+	}
+	round := strconv.FormatInt(roundStartHeight/proofRoundBlocks, 10)
+
+	// Mark as processed immediately so the block-poller's OnStartProofRound
+	// skips it when it eventually reaches the boundary.
+	r.proofRoundMu.Lock()
+	if _, ok := r.proofRounds[roundStartHeight]; ok {
+		r.proofRoundMu.Unlock()
+		return
+	}
+	r.proofRounds[roundStartHeight] = struct{}{}
+	r.proofRoundMu.Unlock()
+
+	// Prime height tracking so challenge scheduling and WaitForBlockHeight
+	// use realistic timing instead of waiting for the first poller tick.
+	r.latestBlockHeight.Swap(currentHeight)
+	if r.atlas != nil {
+		r.atlas.Height = currentHeight
+	}
+	r.storage.RecordChainSync(time.Now().UTC())
+
+	log.Info().
+		Int64("current_height", currentHeight).
+		Int64("round_start", roundStartHeight).
+		Str("round", round).
+		Msg("Catching up on challenge round after restart")
+
+	challenges, err := r.queryProviderChallengesForRound(ctx, roundStartHeight, round)
+	if err != nil {
+		log.Warn().Err(err).
+			Int64("round_start", roundStartHeight).
+			Str("round", round).
+			Msg("Failed to query challenges during catch-up; proofs may be missed for this round")
+		return
+	}
+
+	r.scheduleChallengeProofs(ctx, roundStartHeight, round, challenges)
 }
 
 func (r *chainEventReceiver) queryProviderChallengesForRound(ctx context.Context, roundStartHeight int64, round string) ([]*storageTypes.StorageChallenge, error) {

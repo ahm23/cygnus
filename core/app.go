@@ -27,6 +27,7 @@ type App struct {
 	eventListener  *atlas.EventListener
 	eventCancel    context.CancelFunc
 	chainReceiver  *chainEventReceiver
+	straySweeper   *StraySweeper
 }
 
 func NewApp(home string) (*App, error) {
@@ -66,6 +67,9 @@ func NewApp(home string) (*App, error) {
 		eventListener = nil
 	}
 
+	// initialize stray-file sweeper (nil lister until chain query is wired)
+	straySweeper := NewStraySweeper(&cfg.StraySweep, sm, am, nil)
+
 	return &App{
 		cfg:            cfg,
 		home:           home,
@@ -74,6 +78,7 @@ func NewApp(home string) (*App, error) {
 		storageManager: sm,
 		eventListener:  eventListener,
 		chainReceiver:  receiver,
+		straySweeper:   straySweeper,
 	}, nil
 }
 
@@ -124,6 +129,11 @@ func (app *App) Start() error {
 		}()
 	}
 	log.Debug().Msg("atlas event listener started")
+
+	// start stray-file sweeper
+	if app.straySweeper != nil {
+		go app.straySweeper.Run(ctx)
+	}
 
 	// create & configure shutdown signal
 	shutdown := make(chan os.Signal, 1)

@@ -301,13 +301,24 @@ func (sm *StorageManager) submitProof(ctx context.Context, fileID, challengeID s
 	return nil
 }
 
-// CreateFile saves the file on-disk, indexes it locally, and submits an initial proof.
+// CreateFile saves an uploaded multipart file and submits an initial proof.
 func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHeader *multipart.FileHeader) (*types.FileMetadata, error) {
+	file, err := fileHeader.Open()
+	if err != nil {
+		return nil, fmt.Errorf("failed to open uploaded file: %w", err)
+	}
+	defer file.Close()
+	return sm.ClaimFile(ctx, fileID, fileHeader.Filename, file, fileHeader.Size)
+}
+
+// ClaimFile stores a file from any io.Reader, indexes it locally, and submits an initial proof.
+// This is the shared path used by both direct uploads (CreateFile) and the stray-file sweeper.
+func (sm *StorageManager) ClaimFile(ctx context.Context, fileID, fileName string, src io.Reader, fileSize int64) (*types.FileMetadata, error) {
 	if err := validateFileID(fileID); err != nil {
 		return nil, err
 	}
 
-	reservedSize := fileHeader.Size
+	reservedSize := fileSize
 	if reservedSize < 0 {
 		reservedSize = 0
 	}
@@ -330,14 +341,8 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 		return nil, fmt.Errorf("file already exists locally")
 	}
 
-	file, err := fileHeader.Open()
-	if err != nil {
-		return nil, fmt.Errorf("failed to open uploaded file: %w", err)
-	}
-	defer file.Close()
-
 	tempPath := filePath + ".upload-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	ingest, err := streamFileToDiskAndCollectLeaves(file, tempPath, sm.config.APICfg.FsyncUploads)
+	ingest, err := streamFileToDiskAndCollectLeaves(src, tempPath, sm.config.APICfg.FsyncUploads)
 	if err != nil {
 		return nil, err
 	}
@@ -353,12 +358,10 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 		_ = os.Remove(tempPath)
 		return nil, err
 	}
-	// sm.logger.Info().Str("root_hash", hex.EncodeToString(tree.Root)).Msg("Merkle tree created")
-	// fmt.Println(tree)
 
 	if err := os.Rename(tempPath, filePath); err != nil {
 		_ = os.Remove(tempPath)
-		return nil, fmt.Errorf("failed to move uploaded file into place: %w", err)
+		return nil, fmt.Errorf("failed to move file into place: %w", err)
 	}
 
 	owner := ""
@@ -368,7 +371,7 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 
 	metadata := &types.FileMetadata{
 		FID:         fileID,
-		FileName:    fileHeader.Filename,
+		FileName:    fileName,
 		Size:        ingest.Size,
 		Chunks:      ingest.Chunks,
 		MerkleRoot:  hex.EncodeToString(tree.Root),
@@ -402,13 +405,6 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 
 	sm.commitReservedFile()
 	committedReservation = true
-
-	// sm.logger.Info().
-	// 	Str("file_id", fileID).
-	// 	Int64("size", metadata.Size).
-	// 	Int("chunks", metadata.Chunks).
-	// 	Str("merkle_root", metadata.MerkleRoot).
-	// 	Msg("File created successfully")
 
 	return metadata, nil
 }

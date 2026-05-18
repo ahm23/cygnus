@@ -28,7 +28,7 @@ type FileMetadata struct {
 	UploadedAt   time.Time `json:"uploaded_at"`
 	Owner        string    `json:"owner"` // Wallet address
 	IsAvailable  bool      `json:"is_available"`
-	LastProvedAt time.Time `json:"last_proved_at,omitempty"`
+	LastProvedAt int64 `json:"last_proved_at,omitempty"`
 }
 
 type FileListResponse struct {

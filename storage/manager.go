@@ -36,9 +36,7 @@ type StorageManager struct {
 	fileCount int64
 
 	statusMu      sync.RWMutex
-	lastProofAt   time.Time
 	lastChainSync time.Time
-	lastChallenge time.Time
 
 	uploadProofPause atomic.Int64
 }
@@ -225,18 +223,6 @@ func (sm *StorageManager) RecordChainSync(at time.Time) {
 	sm.statusMu.Unlock()
 }
 
-func (sm *StorageManager) recordChallengeActivity(at time.Time) {
-	sm.statusMu.Lock()
-	sm.lastChallenge = at
-	sm.statusMu.Unlock()
-}
-
-func (sm *StorageManager) recordProofActivity(at time.Time) {
-	sm.statusMu.Lock()
-	sm.lastProofAt = at
-	sm.statusMu.Unlock()
-}
-
 func (sm *StorageManager) PauseUploadProofs() {
 	sm.uploadProofPause.Add(1)
 }
@@ -297,9 +283,9 @@ func (sm *StorageManager) submitProof(ctx context.Context, fileID, challengeID s
 		}
 	}
 
-	now := time.Now().UTC()
-	sm.recordProofActivity(now)
-	sm.updateFileProofTime(ctx, fileID, now)
+	// record the block height at which this proof was submitted.
+	sm.updateFileProofTime(ctx, fileID, sm.atlas.Height)
+
 	return nil
 }
 
@@ -629,12 +615,6 @@ func (sm *StorageManager) GetStatus() (*types.ProviderStatus, error) {
 
 	sm.statusMu.RLock()
 	lastSync := sm.lastChainSync
-	if sm.lastProofAt.After(lastSync) {
-		lastSync = sm.lastProofAt
-	}
-	if sm.lastChallenge.After(lastSync) {
-		lastSync = sm.lastChallenge
-	}
 	sm.statusMu.RUnlock()
 
 	return &types.ProviderStatus{
@@ -694,14 +674,14 @@ func (sm *StorageManager) GetFileMetadata(ctx context.Context, fileID string) (*
 	return &metadata, nil
 }
 
-// updateFileProofTime updates the stored LastProvedAt for a file after a successful proof submission.
-func (sm *StorageManager) updateFileProofTime(ctx context.Context, fileID string, at time.Time) {
+// updateFileProofTime stores the block height at which a file was last proved.
+func (sm *StorageManager) updateFileProofTime(ctx context.Context, fileID string, height int64) {
 	metadata, err := sm.GetFileMetadata(ctx, fileID)
 	if err != nil {
 		log.Warn().Str("file_id", fileID).Err(err).Msg("Failed to read metadata for proof-time update")
 		return
 	}
-	metadata.LastProvedAt = at
+	metadata.LastProvedAt = height
 	if err := sm.storeMetadata(ctx, metadata); err != nil {
 		log.Warn().Str("file_id", fileID).Err(err).Msg("Failed to persist proof-time update")
 	}

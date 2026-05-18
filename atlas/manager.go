@@ -108,6 +108,25 @@ func (am *AtlasManager) ConnectWalletWithKeyNameAndSource(keyName, keySource str
 	return err
 }
 
+// RefreshStorageParams fetches storage module on-chain params via gRPC
+// and writes ProofRoundBlocks and ProofWindowBlocks into the config.
+func (am *AtlasManager) RefreshStorageParams(ctx context.Context) error {
+	res, err := am.QueryClients.Storage.Params(ctx, &storagetypes.QueryParamsRequest{})
+	if err != nil {
+		return fmt.Errorf("refresh storage params: %w", err)
+	}
+
+	am.cfg.ChainCfg.ProofRoundBlocks = res.Params.ProofRoundBlocks
+	am.cfg.ChainCfg.ProofWindowBlocks = res.Params.ProofWindowBlocks
+
+	log.Debug().
+		Uint64("proof_window_blocks", am.cfg.ChainCfg.ProofWindowBlocks).
+		Uint64("proof_round_blocks", am.cfg.ChainCfg.ProofRoundBlocks).
+		Msg("Storage module params fetched from chain")
+
+	return nil
+}
+
 // PollBlockHeight continously polls the block height at 2 second intervals.
 func (am *AtlasManager) PollBlockHeight(ctx context.Context, callback func(context.Context, int64)) {
 	ticker := time.NewTicker(2 * time.Second)

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,17 +36,37 @@ type chainEventReceiver struct {
 
 var _ atlas.ChainEventReceiver = (*chainEventReceiver)(nil)
 
-// === OnNewBlock is an event handler for new block events
+// OnNewBlock is an event handler for new block events.
 func (r *chainEventReceiver) OnNewBlock(ctx context.Context, height int64) {
 	r.latestBlockHeight.Swap(height)
 	r.storage.RecordChainSync(time.Now().UTC())
 }
 
+// OnFileDeleted is an event handler for file delete tx events.
 func (r *chainEventReceiver) OnFileDeleted(ctx context.Context, fileID string) error {
 	return r.storage.DeleteFile(ctx, fileID)
 }
 
-// === OnStartProofRound is an event handler for new proof round events
+// OnProposalPassed is an event handler that refreshes the storage params after
+// any governance proposal implementation. Waits for the next block before refreshing params.
+func (r *chainEventReceiver) OnProposalPassed(ctx context.Context, proposalID uint64) error {
+	nextHeight := r.latestBlockHeight.Load() + 1
+	log.Info().
+		Uint64("proposal_id", proposalID).
+		Int64("next_height", nextHeight).
+		Msg("Governance proposal passed; waiting for next block to refresh storage module params")
+
+	if err := r.atlas.WaitForBlockHeight(ctx, nextHeight); err != nil {
+		return fmt.Errorf("wait for block %d before refreshing params after proposal %d: %w", nextHeight, proposalID, err)
+	}
+
+	if err := r.atlas.RefreshStorageParams(ctx); err != nil {
+		return fmt.Errorf("refresh storage params after proposal %d passed: %w", proposalID, err)
+	}
+	return nil
+}
+
+// OnStartProofRound is an event handler for new proof round events.
 func (r *chainEventReceiver) OnStartProofRound(ctx context.Context, height int64, round string) error {
 	log.Debug().Str("round", round).Msg("Started new challenge round")
 	challenges, err := r.queryProviderChallengesForRound(ctx, height, round)
@@ -273,27 +294,6 @@ func (r *chainEventReceiver) proveChallengeBatchAtHeight(ctx context.Context, ro
 			continue
 		}
 	}
-}
-
-func (r *chainEventReceiver) claimProofRound(height int64) bool {
-	r.proofRoundMu.Lock()
-	defer r.proofRoundMu.Unlock()
-
-	if r.proofRounds == nil {
-		r.proofRounds = make(map[int64]struct{})
-	}
-	if _, ok := r.proofRounds[height]; ok {
-		return false
-	}
-	r.proofRounds[height] = struct{}{}
-
-	for roundHeight := range r.proofRounds {
-		if roundHeight < height-(challengeRoundBlocks*3) {
-			delete(r.proofRounds, roundHeight)
-		}
-	}
-
-	return true
 }
 
 func (r *chainEventReceiver) filterRoundChallenges(challenges []*storageTypes.StorageChallenge, roundStartHeight int64) ([]*storageTypes.StorageChallenge, int, int, int) {

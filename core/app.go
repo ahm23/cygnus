@@ -97,6 +97,11 @@ func (app *App) Start() error {
 	}
 	log.Debug().Msg("wallet connected")
 
+	// fetch storage module params from chain
+	if err := app.atlas.RefreshStorageParams(ctx); err != nil {
+		log.Warn().Err(err).Msg("Failed to fetch storage module params; using defaults")
+	}
+
 	// validate that the provider is registered on-chain
 	if err := app.ensureProviderRegistration(ctx); err != nil {
 		return err
@@ -144,10 +149,14 @@ func (app *App) Start() error {
 // height-dependent actions such as challenge round start actions.
 func (app *App) blockEventHandler(ctx context.Context, height int64) {
 	app.chainReceiver.OnNewBlock(ctx, height)
-	// TODO: challengeRoundBlocks should not be a const. should get this value from chain params.
+	proofRoundBlocks := int64(app.cfg.ChainCfg.ProofRoundBlocks)
+	if proofRoundBlocks == 0 {
+		proofRoundBlocks = 180
+	}
+
 	roundHeight := height - 1
-	if height >= 0 && roundHeight%challengeRoundBlocks == 0 {
-		round := strconv.FormatInt(roundHeight/challengeRoundBlocks, 10)
+	if height >= 0 && roundHeight%proofRoundBlocks == 0 {
+		round := strconv.FormatInt(roundHeight/proofRoundBlocks, 10)
 		if err := app.chainReceiver.OnStartProofRound(ctx, roundHeight, round); err != nil {
 			log.Error().
 				Int64("height", roundHeight).

@@ -40,7 +40,7 @@ func RootCmd() *cobra.Command {
 		panic(err)
 	}
 
-	r.AddCommand(InitCmd(), VersionCmd(), StartCmd(), StressTestCmd())
+	r.AddCommand(InitCmd(), VersionCmd(), StartCmd(), StressTestCmd(), SyncCmd())
 
 	return r
 }

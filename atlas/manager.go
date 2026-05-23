@@ -33,7 +33,7 @@ type AtlasManager struct {
 	Wallet       *AtlasWallet
 	QueryClients types.QueryClients
 
-	storageParams   *storagetypes.Params
+	storageParams   storagetypes.Params
 	providerCache   map[string]string // address → hostname
 	providerCacheMu sync.RWMutex
 }

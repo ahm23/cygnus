@@ -48,12 +48,16 @@ files that are no longer being challenged on-chain.`,
 
 			ctx := context.Background()
 
+			if err := am.RefreshStorageParams(ctx); err != nil {
+				log.Warn().Err(err).Msg("Failed to fetch storage params from chain; using defaults")
+			}
+
 			currentHeight, err := am.GetLatestBlockHeight(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to get current block height: %w", err)
 			}
 
-			proofWindowBlocks := int64(cfg.ChainCfg.ProofWindowBlocks)
+			proofWindowBlocks := int64(am.GetProofWindowBlocks())
 			if proofWindowBlocks <= 0 {
 				proofWindowBlocks = 180
 			}

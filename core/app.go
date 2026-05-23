@@ -145,7 +145,7 @@ func (app *App) Start() error {
 	{
 		currentHeight, err := app.atlas.GetLatestBlockHeight(ctx)
 		if err == nil {
-			proofRoundBlocks := int64(app.cfg.ChainCfg.ProofRoundBlocks)
+			proofRoundBlocks := int64(app.atlas.GetProofRoundBlocks())
 			if proofRoundBlocks == 0 {
 				proofRoundBlocks = 180
 			}
@@ -179,11 +179,11 @@ func (app *App) Start() error {
 // height-dependent actions such as challenge round start actions.
 func (app *App) blockEventHandler(ctx context.Context, height int64) {
 	app.chainReceiver.OnNewBlock(ctx, height)
-	proofRoundBlocks := int64(app.cfg.ChainCfg.ProofRoundBlocks)
+	proofRoundBlocks := int64(app.atlas.GetProofRoundBlocks())
 	if proofRoundBlocks == 0 {
 		proofRoundBlocks = 180
 	}
-	proofWindowBlocks := int64(app.cfg.ChainCfg.ProofWindowBlocks)
+	proofWindowBlocks := int64(app.atlas.GetProofWindowBlocks())
 
 	// refresh provider cache at proof window boundaries
 	if proofWindowBlocks > 0 && height > 0 && height%proofWindowBlocks == 0 {

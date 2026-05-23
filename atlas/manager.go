@@ -31,8 +31,27 @@ type AtlasManager struct {
 	Wallet       *AtlasWallet
 	QueryClients types.QueryClients
 
+	storageParams   *storagetypes.Params
 	providerCache   map[string]string // address → hostname
 	providerCacheMu sync.RWMutex
+}
+
+// GetProofRoundBlocks returns the on-chain proof_round_blocks param,
+// or 0 if params have not been fetched yet.
+func (am *AtlasManager) GetProofRoundBlocks() uint64 {
+	if am.storageParams != nil {
+		return am.storageParams.ProofRoundBlocks
+	}
+	return 0
+}
+
+// GetProofWindowBlocks returns the on-chain proof_window_blocks param,
+// or 0 if params have not been fetched yet.
+func (am *AtlasManager) GetProofWindowBlocks() uint64 {
+	if am.storageParams != nil {
+		return am.storageParams.ProofWindowBlocks
+	}
+	return 0
 }
 
 type MsgClients struct {
@@ -114,19 +133,19 @@ func (am *AtlasManager) ConnectWalletWithKeyNameAndSource(keyName, keySource str
 }
 
 // RefreshStorageParams fetches storage module on-chain params via gRPC
-// and writes ProofRoundBlocks and ProofWindowBlocks into the config.
+// and stores them on the AtlasManager. ProofRoundBlocks and ProofWindowBlocks
+// are used for challenge-round scheduling everywhere else in the provider.
 func (am *AtlasManager) RefreshStorageParams(ctx context.Context) error {
 	res, err := am.QueryClients.Storage.Params(ctx, &storagetypes.QueryParamsRequest{})
 	if err != nil {
 		return fmt.Errorf("refresh storage params: %w", err)
 	}
 
-	am.cfg.ChainCfg.ProofRoundBlocks = res.Params.ProofRoundBlocks
-	am.cfg.ChainCfg.ProofWindowBlocks = res.Params.ProofWindowBlocks
+	am.storageParams = res.Params
 
 	log.Debug().
-		Uint64("proof_window_blocks", am.cfg.ChainCfg.ProofWindowBlocks).
-		Uint64("proof_round_blocks", am.cfg.ChainCfg.ProofRoundBlocks).
+		Uint64("proof_window_blocks", am.storageParams.ProofWindowBlocks).
+		Uint64("proof_round_blocks", am.storageParams.ProofRoundBlocks).
 		Msg("Storage module params fetched from chain")
 
 	return nil

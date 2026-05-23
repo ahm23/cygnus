@@ -11,8 +11,7 @@ type ChainConfig struct {
 	ChainId           string  `yaml:"chain_id" mapstructure:"chain_id"`
 	KeyringBackend    string  `yaml:"keyring_backend" mapstructure:"keyring_backend"`
 	RPCAddr           string  `yaml:"rpc_addr" mapstructure:"rpc_addr"`
-	ProofRoundBlocks  uint64  `yaml:"proof_round_blocks" mapstructure:"proof_round_blocks"`
-	ProofWindowBlocks uint64  `yaml:"proof_window_blocks" mapstructure:"proof_window_blocks"`
+
 	GRPCAddr          string  `yaml:"grpc_addr" mapstructure:"grpc_addr"`
 	GasPrice          string  `yaml:"gas_price" mapstructure:"gas_price"`
 	GasAdjustment     float64 `yaml:"gas_adjustment" mapstructure:"gas_adjustment"`
@@ -58,8 +57,8 @@ func DefaultChainConfig() ChainConfig {
 		ChainId:        "atlas-1",
 		RPCAddr:        "https://rpc.atlasprotocol.cloud",
 		GRPCAddr:       "https://grpc.atlasprotocol.cloud",
-		GasPrice:       "0.025uatl",
-		GasAdjustment:  1.5,
+		GasPrice:       "0.03uatl",
+		GasAdjustment:  2.0,
 		KeyringBackend: "test",
 	}
 }
@@ -68,7 +67,7 @@ func DefaultConfig(home string) *BaseConfig {
 	return &BaseConfig{
 		ProviderName:     "My First Provider",
 		Ip:               "localhost",
-		TotalSpace:       10 * 1024 * 1024 * 1024,
+		TotalSpace:       10 * 1000 * 1000 * 1000,
 		DataDirectory:    home + "/data",
 		CacheMerkleTrees: true,
 

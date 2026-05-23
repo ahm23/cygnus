@@ -28,7 +28,7 @@ import (
 )
 
 type AtlasWallet struct {
-	mu     sync.RWMutex
+	mu sync.RWMutex
 
 	kr           keyring.Keyring
 	clientCtx    *client.Context
@@ -72,6 +72,7 @@ const (
 )
 
 func NewAtlasWallet(cfg *config.Config, clientCtx *client.Context, queryClients *types.QueryClients, keyName, keySource string) (*AtlasWallet, error) {
+	log.Debug().Str("name", keyName).Msg("Initializing wallet...")
 	if strings.TrimSpace(keyName) == "" {
 		return nil, fmt.Errorf("key name cannot be empty")
 	}
@@ -95,6 +96,11 @@ func NewAtlasWallet(cfg *config.Config, clientCtx *client.Context, queryClients 
 
 	// Get encoding config from your blockchain
 	encodingConfig := app.MakeEncodingConfig()
+
+	log.Debug().
+		Str("source", cfg.ChainCfg.KeyringBackend).
+		Str("backend", cfg.ChainCfg.KeyringBackend).
+		Msg("Creating keyring...")
 
 	// Create keyring
 	kr, err := keyring.New(
@@ -451,6 +457,7 @@ func (w *AtlasWallet) waitForTx(txHash string, timeout time.Duration) (*sdk.TxRe
 
 // refreshAccountInfo queries and refreshes account info.
 func (w *AtlasWallet) refreshAccountInfo(ctx context.Context) error {
+	log.Debug().Msg("Refreshing account info...")
 	accountNumber, sequence, err := w.queryAccountInfo(ctx)
 	if err != nil {
 		return err

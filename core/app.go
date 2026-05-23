@@ -186,11 +186,12 @@ func (app *App) blockEventHandler(ctx context.Context, height int64) {
 	}
 	proofWindowBlocks := int64(app.atlas.GetProofWindowBlocks())
 
-	// refresh provider cache at proof window boundaries
+	// refresh provider cache and sweep stale files at proof window boundaries
 	if proofWindowBlocks > 0 && height > 0 && height%proofWindowBlocks == 0 {
 		if err := app.atlas.RefreshProviders(ctx); err != nil {
 			log.Warn().Err(err).Msg("Provider cache refresh failed at window boundary")
 		}
+		app.storageManager.CleanStaleFiles(ctx, height, proofWindowBlocks)
 	}
 
 	roundHeight := height - 1

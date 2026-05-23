@@ -90,7 +90,7 @@ func TestBuildMerkleTreeFromFileSupportsNonZeroChunkProofs(t *testing.T) {
 		t.Fatalf("failed to write proof file: %v", err)
 	}
 
-	tree, chunks, err := sm.buildMerkleTreeFromFile(context.Background(), filePath)
+	tree, _, chunks, err := sm.buildMerkleTreeFromFile(context.Background(), filePath)
 	if err != nil {
 		t.Fatalf("buildMerkleTreeFromFile returned error: %v", err)
 	}

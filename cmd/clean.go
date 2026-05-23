@@ -61,11 +61,6 @@ files that are no longer being challenged on-chain.`,
 			if proofWindowBlocks <= 0 {
 				proofWindowBlocks = 180
 			}
-			thresholdBlocks := 3 * proofWindowBlocks
-			minHeight := currentHeight - thresholdBlocks
-			if minHeight < 0 {
-				minHeight = 0
-			}
 
 			sm, err := storage.NewStorageManager(cfg, am)
 			if err != nil {
@@ -75,42 +70,9 @@ files that are no longer being challenged on-chain.`,
 
 			fmt.Printf("Current block height:  %d\n", currentHeight)
 			fmt.Printf("Proof window blocks:   %d\n", proofWindowBlocks)
-			fmt.Printf("Threshold (3 windows): %d blocks\n", thresholdBlocks)
-			fmt.Printf("Min allowed height:    %d\n", minHeight)
-			fmt.Println()
+			fmt.Printf("Threshold (2 windows): %d blocks\n", 2*proofWindowBlocks)
 
-			var cleaned int
-			const pageSize = 1000
-
-			for {
-				list, err := sm.ListFiles(ctx, 1, pageSize)
-				if err != nil {
-					return fmt.Errorf("failed to list files: %w", err)
-				}
-
-				for _, f := range list.Files {
-					if f.LastProvedAt >= minHeight {
-						continue
-					}
-
-					log.Info().
-						Str("file_id", f.FID).
-						Str("file_name", f.FileName).
-						Int64("last_proved_height", f.LastProvedAt).
-						Msg("Clean: removing stale file")
-
-					if err := sm.DeleteFile(ctx, f.FID); err != nil {
-						log.Error().Str("file_id", f.FID).Err(err).Msg("Clean: failed to delete file")
-						continue
-					}
-					cleaned++
-				}
-
-				if !list.HasNext {
-					break
-				}
-			}
-
+			cleaned := sm.CleanStaleFiles(ctx, currentHeight, proofWindowBlocks)
 			fmt.Printf("\nCleaned %d stale file(s)\n", cleaned)
 			return nil
 		},

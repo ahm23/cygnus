@@ -641,6 +641,54 @@ func (sm *StorageManager) GetFileMetadata(ctx context.Context, fileID string) (*
 	return &metadata, nil
 }
 
+// CleanStaleFiles removes local files whose last proof was more than
+// proofWindowGracePeriod proof-window blocks ago. Returns the number of files cleaned.
+func (sm *StorageManager) CleanStaleFiles(ctx context.Context, currentHeight, proofWindowBlocks int64) int {
+	if proofWindowBlocks <= 0 {
+		return 0
+	}
+	threshold := currentHeight - 2*proofWindowBlocks
+	if threshold < 0 {
+		threshold = 0
+	}
+
+	fileKeys, err := sm.db.Keys(ctx, filePrefix)
+	if err != nil {
+		log.Warn().Err(err).Msg("CleanStaleFiles: failed to list files")
+		return 0
+	}
+
+	var cleaned int
+	for _, key := range fileKeys {
+		fileID := strings.TrimPrefix(key, filePrefix)
+		metadata, err := sm.GetFileMetadata(ctx, fileID)
+		if err != nil || metadata == nil {
+			continue
+		}
+		if metadata.LastProvedAt >= threshold {
+			continue
+		}
+
+		log.Info().
+			Str("file_id", fileID).
+			Str("file_name", metadata.FileName).
+			Int64("last_proved_height", metadata.LastProvedAt).
+			Int64("threshold", threshold).
+			Msg("CleanStaleFiles: removing stale file")
+
+		if err := sm.DeleteFile(ctx, fileID); err != nil {
+			log.Error().Str("file_id", fileID).Err(err).Msg("CleanStaleFiles: failed to delete file")
+			continue
+		}
+		cleaned++
+	}
+
+	if cleaned > 0 {
+		log.Info().Int("cleaned", cleaned).Msg("CleanStaleFiles: finished sweep")
+	}
+	return cleaned
+}
+
 // updateFileProofTime stores the block height at which a file was last proved.
 func (sm *StorageManager) updateFileProofTime(ctx context.Context, fileID string, height int64) {
 	metadata, err := sm.GetFileMetadata(ctx, fileID)

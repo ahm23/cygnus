@@ -26,7 +26,11 @@ type APIConfig struct {
 }
 
 type Config struct {
-	HomeDirectory string      `yaml:"home_dir" mapstructure:"home_dir"`
+	BaseConfig
+	HomeDirectory string
+}
+
+type BaseConfig struct {
 	DataDirectory string      `yaml:"data_directory" mapstructure:"data_directory"`
 	ChainCfg      ChainConfig `yaml:"chain_config" mapstructure:"chain_config"`
 	APICfg        APIConfig   `yaml:"api_config" mapstructure:"api_config"`
@@ -60,8 +64,8 @@ func DefaultChainConfig() ChainConfig {
 	}
 }
 
-func DefaultConfig(home string) *Config {
-	return &Config{
+func DefaultConfig(home string) *BaseConfig {
+	return &BaseConfig{
 		ProviderName:     "My First Provider",
 		Ip:               "localhost",
 		TotalSpace:       10 * 1024 * 1024 * 1024,

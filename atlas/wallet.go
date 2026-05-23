@@ -98,7 +98,7 @@ func NewAtlasWallet(cfg *config.Config, clientCtx *client.Context, queryClients 
 	encodingConfig := app.MakeEncodingConfig()
 
 	log.Debug().
-		Str("source", cfg.ChainCfg.KeyringBackend).
+		Str("source", keySource).
 		Str("backend", cfg.ChainCfg.KeyringBackend).
 		Msg("Creating keyring...")
 
@@ -122,6 +122,10 @@ func NewAtlasWallet(cfg *config.Config, clientCtx *client.Context, queryClients 
 	if err != nil {
 		return nil, err
 	}
+	log.Debug().
+		Str("address", address.String()).
+		Str("pubkey", info.PubKey.GoString()).
+		Msg("Key info: ")
 
 	walletClientCtx := clientCtx.
 		WithKeyring(kr).

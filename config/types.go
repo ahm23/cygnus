@@ -8,13 +8,13 @@ type Seed struct {
 }
 
 type ChainConfig struct {
-	ChainId           string  `yaml:"chain_id" mapstructure:"chain_id"`
-	KeyringBackend    string  `yaml:"keyring_backend" mapstructure:"keyring_backend"`
-	RPCAddr           string  `yaml:"rpc_addr" mapstructure:"rpc_addr"`
+	ChainId        string `yaml:"chain_id" mapstructure:"chain_id"`
+	KeyringBackend string `yaml:"keyring_backend" mapstructure:"keyring_backend"`
+	RPCAddr        string `yaml:"rpc_addr" mapstructure:"rpc_addr"`
 
-	GRPCAddr          string  `yaml:"grpc_addr" mapstructure:"grpc_addr"`
-	GasPrice          string  `yaml:"gas_price" mapstructure:"gas_price"`
-	GasAdjustment     float64 `yaml:"gas_adjustment" mapstructure:"gas_adjustment"`
+	GRPCAddr      string  `yaml:"grpc_addr" mapstructure:"grpc_addr"`
+	GasPrice      string  `yaml:"gas_price" mapstructure:"gas_price"`
+	GasAdjustment float64 `yaml:"gas_adjustment" mapstructure:"gas_adjustment"`
 }
 
 type APIConfig struct {
@@ -56,7 +56,7 @@ func DefaultChainConfig() ChainConfig {
 	return ChainConfig{
 		ChainId:        "atlas-1",
 		RPCAddr:        "https://rpc.atlasprotocol.cloud",
-		GRPCAddr:       "https://grpc.atlasprotocol.cloud",
+		GRPCAddr:       "grpc.atlasprotocol.cloud:443",
 		GasPrice:       "0.03uatl",
 		GasAdjustment:  2.0,
 		KeyringBackend: "test",

@@ -99,10 +99,8 @@ func (am *AtlasManager) ConnectGRPC() error {
 
 	// create TLS credentials
 	creds := credentials.NewTLS(&tls.Config{
-		InsecureSkipVerify: true,
+		MinVersion: tls.VersionTLS12,
 	})
-
-	log.Info().Msgf("GRPC ADDRESS: %s", am.cfg.ChainCfg.GRPCAddr)
 
 	// establish gRPC connection
 	conn, err := grpc.DialContext(
@@ -118,7 +116,6 @@ func (am *AtlasManager) ConnectGRPC() error {
 	am.cmtClient = cmtservice.NewServiceClient(conn)
 	am.clientCtx = am.clientCtx.WithGRPCClient(conn)
 
-	log.Info().Msg("waht...")
 	// initialize query clients
 	am.QueryClients = types.QueryClients{
 		Auth:    authtypes.NewQueryClient(conn),

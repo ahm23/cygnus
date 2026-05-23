@@ -159,7 +159,7 @@ func createNewWallet(kr keyring.Keyring, name, homeDir string) (*WalletInfo, err
 	fmt.Printf("  Name: %s\n", name)
 	fmt.Printf("  Address: %s\n", addr.String())
 
-	fmt.Println("\n⚠️  IMPORTANT: Save this mnemonic phrase in a secure location!")
+	fmt.Println("\n IMPORTANT: Save this mnemonic phrase in a secure location!")
 	fmt.Println("   It cannot be recovered if lost.")
 	fmt.Println("   " + mnemonic)
 	fmt.Println("")

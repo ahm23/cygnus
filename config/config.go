@@ -7,7 +7,7 @@ import (
 	yaml "gopkg.in/yaml.v3"
 )
 
-func (c Config) Validate() error {
+func (c BaseConfig) Validate() error {
 	if c.DataDirectory == "" {
 		return errors.New("invalid data directory")
 	}
@@ -26,7 +26,7 @@ func ReadConfig(data []byte) (*Config, error) {
 	return &config, config.Validate()
 }
 
-func (c Config) Export() ([]byte, error) {
+func (c BaseConfig) Export() ([]byte, error) {
 	sb := strings.Builder{}
 	sb.WriteString("=======================\n")
 	sb.WriteString("#### Cygnus Config ####\n")

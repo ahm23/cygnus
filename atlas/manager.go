@@ -33,7 +33,7 @@ type AtlasManager struct {
 	Wallet       *AtlasWallet
 	QueryClients types.QueryClients
 
-	storageParams   storagetypes.Params
+	storageParams   *storagetypes.Params
 	providerCache   map[string]string // address → hostname
 	providerCacheMu sync.RWMutex
 }
@@ -149,7 +149,7 @@ func (am *AtlasManager) RefreshStorageParams(ctx context.Context) error {
 		return fmt.Errorf("refresh storage params: %w", err)
 	}
 
-	am.storageParams = res.Params
+	am.storageParams = &res.Params
 
 	log.Debug().
 		Uint64("proof_window_blocks", am.storageParams.ProofWindowBlocks).

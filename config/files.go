@@ -48,7 +48,7 @@ func readFile(directory string, filename string) ([]byte, error) {
 }
 
 func createFiles(directory string) error {
-	config, err := DefaultConfig().Export()
+	config, err := DefaultConfig(directory).Export()
 	if err != nil {
 		return err
 	}

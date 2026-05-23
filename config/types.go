@@ -60,12 +60,12 @@ func DefaultChainConfig() ChainConfig {
 	}
 }
 
-func DefaultConfig() *Config {
+func DefaultConfig(home string) *Config {
 	return &Config{
 		ProviderName:     "My First Provider",
 		Ip:               "localhost",
 		TotalSpace:       10 * 1024 * 1024 * 1024,
-		DataDirectory:    "$HOME/.cygnus/data",
+		DataDirectory:    home + "/data",
 		CacheMerkleTrees: true,
 
 		ChainCfg:   DefaultChainConfig(),

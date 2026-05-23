@@ -80,11 +80,10 @@ files that are no longer being challenged on-chain.`,
 			fmt.Println()
 
 			var cleaned int
-			page := 1
 			const pageSize = 1000
 
 			for {
-				list, err := sm.ListFiles(ctx, page, pageSize)
+				list, err := sm.ListFiles(ctx, 1, pageSize)
 				if err != nil {
 					return fmt.Errorf("failed to list files: %w", err)
 				}
@@ -110,7 +109,6 @@ files that are no longer being challenged on-chain.`,
 				if !list.HasNext {
 					break
 				}
-				page++
 			}
 
 			fmt.Printf("\nCleaned %d stale file(s)\n", cleaned)

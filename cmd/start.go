@@ -50,7 +50,7 @@ func StartCmd() *cobra.Command {
 
 			for restartAttempt := 1; restartAttempt <= 3 && err != nil; restartAttempt++ {
 				log.Err(err).Msg("Failed to start Cygnus.")
-				log.Info().Msgf("Attempting restart again in %d seconds (attempt %d of %d)...\n", time.Second*5, restartAttempt, 3)
+				log.Info().Msgf("Attempting restart again in %d seconds (attempt %d of %d)...\n", 5, restartAttempt, 3)
 				time.Sleep(time.Second * 5)
 				err = app.Start()
 			}

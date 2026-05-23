@@ -21,7 +21,7 @@ import (
 const (
 	challengeRoundBlocks        int64 = 10
 	challengeProofSpreadBlocks        = int(challengeRoundBlocks * 75 / 100)
-	challengeRoundQueryAttempts       = 12
+	challengeRoundQueryAttempts       = 3
 	challengeRoundQueryDelay          = 1000 * time.Millisecond
 )
 

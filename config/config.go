@@ -28,10 +28,6 @@ func ReadConfig(data []byte) (*Config, error) {
 
 func (c BaseConfig) Export() ([]byte, error) {
 	sb := strings.Builder{}
-	sb.WriteString("=======================\n")
-	sb.WriteString("#### Cygnus Config ####\n")
-	sb.WriteString("=======================\n\n")
-
 	d, err := yaml.Marshal(&c)
 	if err != nil {
 		return nil, err

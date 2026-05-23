@@ -98,9 +98,10 @@ func (am *AtlasManager) ConnectGRPC() error {
 
 	// create TLS credentials
 	creds := credentials.NewTLS(&tls.Config{
-		// For production with valid certificates
 		MinVersion: tls.VersionTLS12,
 	})
+
+	log.Info().Msgf("GRPC ADDRESS: %s", am.cfg.ChainCfg.GRPCAddr)
 
 	// establish gRPC connection
 	conn, err := grpc.DialContext(

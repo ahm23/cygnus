@@ -2,6 +2,7 @@ package atlas
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"os"
 	"sync"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	cmtservice "github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
@@ -94,11 +96,17 @@ func (am *AtlasManager) ConnectGRPC() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// create TLS credentials
+	creds := credentials.NewTLS(&tls.Config{
+		// For production with valid certificates
+		MinVersion: tls.VersionTLS12,
+	})
+
 	// establish gRPC connection
 	conn, err := grpc.DialContext(
 		ctx,
 		am.cfg.ChainCfg.GRPCAddr,
-		grpc.WithInsecure(), // TODO: use grpc.WithTransportCredentials(insecure.NewCredentials()) for newer grpc
+		grpc.WithTransportCredentials(creds),
 		grpc.WithBlock(),
 	)
 	if err != nil {

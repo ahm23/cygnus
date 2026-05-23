@@ -171,7 +171,7 @@ func (s *StraySweeper) claimOne(ctx context.Context, file *storageTypes.File) {
 			continue
 		}
 
-		downloadURL := fmt.Sprintf("http://%s/api/v1/download/%s", holderHostname, file.Fid)
+		downloadURL := fmt.Sprintf("https://%s/api/v1/download/%s", holderHostname, file.Fid)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 		if err != nil {
 			log.Warn().Err(err).Str("provider", addr).Msg("Failed to create download request")

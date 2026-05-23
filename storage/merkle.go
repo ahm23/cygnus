@@ -10,6 +10,7 @@ import (
 	"os"
 
 	merkletree "github.com/ahm23/go-merkletree-xxh"
+	"github.com/rs/zerolog/log"
 	"github.com/zeebo/blake3"
 )
 
@@ -45,7 +46,7 @@ func buildMerkleTreeFromLeaves(leaves [][]byte) (*merkletree.MerkleTree, error) 
 	return tree, nil
 }
 
-func (sm *StorageManager) buildMerkleTreeFromReader(ctx context.Context, reader io.Reader) (*merkletree.MerkleTree, int, error) {
+func (sm *StorageManager) buildMerkleTreeFromReader(ctx context.Context, reader io.Reader) (*merkletree.MerkleTree, [][]byte, int, error) {
 	// sm.logger.Debug("Building Merkle tree from stream", zap.Int64("chunk_size", types.ChunkSize))
 
 	buf := make([]byte, types.ChunkSize)
@@ -54,7 +55,7 @@ func (sm *StorageManager) buildMerkleTreeFromReader(ctx context.Context, reader 
 	for {
 		n, readErr := io.ReadFull(reader, buf)
 		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
-			return nil, 0, fmt.Errorf("failed to read merkle input: %w", readErr)
+			return nil, nil, 0, fmt.Errorf("failed to read merkle input: %w", readErr)
 		}
 		if n > 0 {
 			leaves = append(leaves, hashChunk(buf[:n]))
@@ -64,38 +65,41 @@ func (sm *StorageManager) buildMerkleTreeFromReader(ctx context.Context, reader 
 		}
 	}
 
+	// leaves are the blake3 hashes of each chunk — the raw material for the merkle tree.
+	// tree.Leaves would be the XXH128 of these, so we return them separately.
 	tree, err := buildMerkleTreeFromLeaves(leaves)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 
 	// sm.logger.Info("Merkle tree created",
 	// 	zap.String("root_hash", hex.EncodeToString(tree.Root)),
 	// 	zap.Int("total_chunks", len(leaves)))
 
-	return tree, len(leaves), nil
+	return tree, leaves, len(leaves), nil
 }
 
 // buildMerkleTree creates a Merkle tree from file chunks.
-func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*merkletree.MerkleTree, error) {
-	tree, _, err := sm.buildMerkleTreeFromReader(ctx, bytes.NewReader(data))
-	return tree, err
+func (sm *StorageManager) buildMerkleTree(ctx context.Context, data []byte) (*merkletree.MerkleTree, [][]byte, error) {
+	tree, leaves, _, err := sm.buildMerkleTreeFromReader(ctx, bytes.NewReader(data))
+	return tree, leaves, err
 }
 
-func (sm *StorageManager) buildMerkleTreeFromFile(ctx context.Context, filePath string) (*merkletree.MerkleTree, int, error) {
+func (sm *StorageManager) buildMerkleTreeFromFile(ctx context.Context, filePath string) (*merkletree.MerkleTree, [][]byte, int, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to open file for merkle build: %w", err)
+		return nil, nil, 0, fmt.Errorf("failed to open file for merkle build: %w", err)
 	}
 	defer file.Close()
 
 	return sm.buildMerkleTreeFromReader(ctx, file)
 }
 
-// cacheMerkleTree persists a merkle tree's leaf hashes and root hash.
-func (sm *StorageManager) cacheMerkleTree(ctx context.Context, fileID string, tree *merkletree.MerkleTree) error {
-	leaves := make([]string, len(tree.Leaves))
-	for i, leaf := range tree.Leaves {
+// cacheMerkleTree persists the original leaf hashes (blake3 of each chunk) alongside
+// the tree's root hash.
+func (sm *StorageManager) cacheMerkleTree(ctx context.Context, fileID string, tree *merkletree.MerkleTree, originalLeaves [][]byte) error {
+	leaves := make([]string, len(originalLeaves))
+	for i, leaf := range originalLeaves {
 		leaves[i] = hex.EncodeToString(leaf)
 	}
 
@@ -109,23 +113,29 @@ func (sm *StorageManager) cacheMerkleTree(ctx context.Context, fileID string, tr
 }
 
 // loadCachedMerkleTree reconstructs a Merkle tree from cached leaf hashes.
-// Returns an error if the cache entry is missing, has no leaves, or decoding fails.
+// Returns the tree on success. If the cache is missing, corrupt, or the
+// reconstructed root doesn't match the stored root_hash, the cache entry
+// is deleted and (nil, nil) is returned so the caller rebuilds from disk.
 func (sm *StorageManager) loadCachedMerkleTree(ctx context.Context, fileID string) (*merkletree.MerkleTree, error) {
 	key := MerkleKey(fileID)
 
 	hashData, err := sm.db.GetHash(ctx, key)
 	if err != nil {
-		return nil, err
+		return nil, nil // cache miss - rebuild from file
 	}
 
 	leavesRaw, ok := hashData["leaves"]
 	if !ok {
-		return nil, fmt.Errorf("merkle cache for %s has no stored leaves", fileID)
+		log.Warn().Str("file_id", fileID).Msg("Merkle cache has no stored leaves; discarding")
+		_ = sm.db.Delete(ctx, key)
+		return nil, nil
 	}
 
 	leavesList, ok := leavesRaw.([]interface{})
 	if !ok || len(leavesList) == 0 {
-		return nil, fmt.Errorf("merkle cache for %s has invalid or empty leaves", fileID)
+		log.Warn().Str("file_id", fileID).Msg("Merkle cache has invalid or empty leaves; discarding")
+		_ = sm.db.Delete(ctx, key)
+		return nil, nil
 	}
 
 	leaves := make([][]byte, len(leavesList))
@@ -141,10 +151,17 @@ func (sm *StorageManager) loadCachedMerkleTree(ctx context.Context, fileID strin
 		leaves[i] = leafBytes
 	}
 
-	return buildMerkleTreeFromLeaves(leaves)
+	tree, err := buildMerkleTreeFromLeaves(leaves)
+	if err != nil {
+		log.Warn().Str("file_id", fileID).Err(err).Msg("Failed to rebuild tree from cached leaves; discarding")
+		_ = sm.db.Delete(ctx, key)
+		return nil, nil
+	}
+
+	return tree, nil
 }
 
 // BuildMerkleTree is kept for local verification and tests.
-func (sm *StorageManager) BuildMerkleTree(ctx context.Context, data []byte) (*merkletree.MerkleTree, error) {
+func (sm *StorageManager) BuildMerkleTree(ctx context.Context, data []byte) (*merkletree.MerkleTree, [][]byte, error) {
 	return sm.buildMerkleTree(ctx, data)
 }

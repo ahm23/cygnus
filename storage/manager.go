@@ -336,7 +336,7 @@ func (sm *StorageManager) ClaimFile(ctx context.Context, fileID, fileName string
 	}
 
 	if sm.config.CacheMerkleTrees {
-		if err := sm.cacheMerkleTree(ctx, fileID, tree); err != nil {
+		if err := sm.cacheMerkleTree(ctx, fileID, tree, ingest.Leaves); err != nil {
 			sm.cleanupCreatedFile(ctx, fileID, filePath)
 			return nil, fmt.Errorf("failed to save merkle metadata: %w", err)
 		}
@@ -416,13 +416,18 @@ func (sm *StorageManager) ProveFile(ctx context.Context, fileID string, challeng
 	}
 
 	var tree *merkletree.MerkleTree
+	var originalLeaves [][]byte
 	if sm.config.CacheMerkleTrees {
 		tree, err = sm.loadCachedMerkleTree(ctx, fileID)
 	}
 	if tree == nil {
-		tree, _, err = sm.buildMerkleTreeFromFile(ctx, filePath)
+		tree, originalLeaves, _, err = sm.buildMerkleTreeFromFile(ctx, filePath)
 		if err != nil {
 			return fmt.Errorf("failed to rebuild merkle tree for %s: %w", fileID, err)
+		}
+		// re-cache with the correct original leaves now that we rebuilt
+		if sm.config.CacheMerkleTrees && originalLeaves != nil {
+			_ = sm.cacheMerkleTree(ctx, fileID, tree, originalLeaves)
 		}
 	}
 

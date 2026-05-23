@@ -22,9 +22,9 @@ type API struct {
 func NewAPI(cfg *config.APIConfig) *API {
 	srv := fiber.New(fiber.Config{
 		AppName:                      "Cygnus DePIN Storage Provider",
-		ReadTimeout:                  30 * time.Minute,
-		WriteTimeout:                 30 * time.Minute,
-		IdleTimeout:                  30 * time.Minute,
+		ReadTimeout:                  5 * time.Minute,
+		WriteTimeout:                 5 * time.Minute,
+		IdleTimeout:                  5 * time.Minute,
 		DisablePreParseMultipartForm: false,
 		BodyLimit:                    4 * 1024 * 1024 * 1024,
 		ErrorHandler: func(c *fiber.Ctx, err error) error {

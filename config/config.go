@@ -34,7 +34,6 @@ func (c BaseConfig) Export() ([]byte, error) {
 	}
 
 	sb.Write(d)
-	sb.WriteString("\n=======================\n")
 
 	return []byte(sb.String()), nil
 }

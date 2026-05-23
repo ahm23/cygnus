@@ -16,6 +16,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"github.com/cosmos/go-bip39"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/term"
 )
 
@@ -33,6 +34,7 @@ func InitWallet(homeDir string) (*WalletInfo, error) {
 		return nil, err
 	}
 
+	log.Info().Str("type", cfg.ChainCfg.KeyringBackend).Msg("KEYRING BACKEND")
 	// Create keyring using YOUR blockchain's encoding
 	kr, err := createKeyring(homeDir, cfg.ChainCfg.KeyringBackend)
 	if err != nil {

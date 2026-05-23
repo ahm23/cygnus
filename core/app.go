@@ -107,6 +107,7 @@ func (app *App) Start() error {
 	if err := app.atlas.RefreshStorageParams(ctx); err != nil {
 		log.Warn().Err(err).Msg("Failed to fetch storage module params; using defaults")
 	}
+	app.chainReceiver.SetProofRoundBlocks(int64(app.atlas.GetProofRoundBlocks()))
 
 	// validate that the provider is registered on-chain
 	if err := app.ensureProviderRegistration(ctx); err != nil {

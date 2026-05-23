@@ -19,8 +19,6 @@ import (
 )
 
 const (
-	challengeRoundBlocks        int64 = 10
-	challengeProofSpreadBlocks        = int(challengeRoundBlocks * 75 / 100)
 	challengeRoundQueryAttempts       = 3
 	challengeRoundQueryDelay          = 1000 * time.Millisecond
 )
@@ -30,8 +28,26 @@ type chainEventReceiver struct {
 	atlas             *atlas.AtlasManager
 	storage           *storage.StorageManager
 	latestBlockHeight atomic.Int64
-	proofRoundMu      sync.Mutex
-	proofRounds       map[int64]struct{}
+
+	proofRoundBlocks int64 // from chain params; set before goroutines start
+	proofRoundMu     sync.Mutex
+	proofRounds      map[int64]struct{}
+}
+
+// SetProofRoundBlocks sets the number of blocks per proof round, used
+// for deadline and spread calculations. Should be called after fetching
+// storage module params from the chain.
+func (r *chainEventReceiver) SetProofRoundBlocks(n int64) {
+	r.proofRoundBlocks = n
+}
+
+// proofRoundBlocksOrDefault returns proofRoundBlocks, falling back to 10
+// if it hasn't been set yet (e.g. before the first params fetch).
+func (r *chainEventReceiver) proofRoundBlocksOrDefault() int64 {
+	if r.proofRoundBlocks > 0 {
+		return r.proofRoundBlocks
+	}
+	return 10
 }
 
 var _ atlas.ChainEventReceiver = (*chainEventReceiver)(nil)
@@ -63,6 +79,7 @@ func (r *chainEventReceiver) OnProposalPassed(ctx context.Context, proposalID ui
 	if err := r.atlas.RefreshStorageParams(ctx); err != nil {
 		return fmt.Errorf("refresh storage params after proposal %d passed: %w", proposalID, err)
 	}
+	r.SetProofRoundBlocks(int64(r.atlas.GetProofRoundBlocks()))
 	return nil
 }
 
@@ -260,7 +277,7 @@ func (r *chainEventReceiver) scheduleChallengeProofs(ctx context.Context, roundS
 	firstTargetHeight := int64(0)
 	lastTargetHeight := int64(0)
 	for i, challenge := range challenges {
-		firstTarget, lastTarget, ok := challengeTargetWindow(roundStartHeight, currentHeight, challenge)
+		firstTarget, lastTarget, ok := r.challengeTargetWindow(roundStartHeight, currentHeight, challenge)
 		if !ok {
 			skippedExpired++
 			continue
@@ -380,11 +397,14 @@ func (r *chainEventReceiver) filterRoundChallenges(challenges []*storageTypes.St
 	return filtered, skippedOld, skippedFuture, skippedInvalid
 }
 
-func challengeTargetWindow(roundStartHeight, currentHeight int64, challenge *storageTypes.StorageChallenge) (int64, int64, bool) {
-	deadlineHeight := challengeDeadlineHeight(roundStartHeight, challenge)
+func (r *chainEventReceiver) challengeTargetWindow(roundStartHeight, currentHeight int64, challenge *storageTypes.StorageChallenge) (int64, int64, bool) {
+	deadlineHeight := r.challengeDeadlineHeight(roundStartHeight, challenge)
+
+	roundBlocks := r.proofRoundBlocksOrDefault()
+	spreadBlocks := int(roundBlocks * 75 / 100)
 
 	firstTarget := maxInt64(roundStartHeight+1, currentHeight+1)
-	preferredLastTarget := minInt64(roundStartHeight+int64(challengeProofSpreadBlocks), deadlineHeight)
+	preferredLastTarget := minInt64(roundStartHeight+int64(spreadBlocks), deadlineHeight)
 	lastTarget := preferredLastTarget
 	if firstTarget > lastTarget {
 		lastTarget = deadlineHeight
@@ -404,11 +424,11 @@ func (r *chainEventReceiver) isChallengeProveableForRound(challenge *storageType
 	if currentHeight <= 0 {
 		return true
 	}
-	return currentHeight <= challengeDeadlineHeight(roundStartHeight, challenge)
+	return currentHeight <= r.challengeDeadlineHeight(roundStartHeight, challenge)
 }
 
-func challengeDeadlineHeight(roundStartHeight int64, challenge *storageTypes.StorageChallenge) int64 {
-	deadlineHeight := roundStartHeight + challengeRoundBlocks
+func (r *chainEventReceiver) challengeDeadlineHeight(roundStartHeight int64, challenge *storageTypes.StorageChallenge) int64 {
+	deadlineHeight := roundStartHeight + r.proofRoundBlocksOrDefault()
 	if challenge != nil && challenge.DeadlineHeight > 0 && int64(challenge.DeadlineHeight) < deadlineHeight {
 		return int64(challenge.DeadlineHeight)
 	}

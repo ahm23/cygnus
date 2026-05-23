@@ -22,7 +22,7 @@ const (
 	challengeRoundBlocks        int64 = 10
 	challengeProofSpreadBlocks        = int(challengeRoundBlocks * 75 / 100)
 	challengeRoundQueryAttempts       = 12
-	challengeRoundQueryDelay          = 250 * time.Millisecond
+	challengeRoundQueryDelay          = 1000 * time.Millisecond
 )
 
 // chainEventReceiver bridges atlas blockchain events to the storage manager.
@@ -151,21 +151,20 @@ func (r *chainEventReceiver) queryProviderChallengesForRound(ctx context.Context
 
 		current, skippedOld, skippedFuture, skippedInvalid := r.filterRoundChallenges(challenges, roundStartHeight)
 		minRound, maxRound, hasRound := challengeRoundBounds(challenges)
-		log.Debug().
-			Int("attempt", attempt).
-			Str("round", round).
-			Int64("round_start_height", roundStartHeight).
-			Int("challenge_count", len(challenges)).
-			Int("current_round_challenges", len(current)).
-			Int("skipped_old", skippedOld).
-			Int("skipped_future", skippedFuture).
-			Int("skipped_invalid", skippedInvalid).
-			Int64("min_challenge_round", minRound).
-			Int64("max_challenge_round", maxRound).
-			Bool("has_challenge_rounds", hasRound).
-			Msg("Fetched challenges for round")
-
 		if len(current) > 0 || attempt == challengeRoundQueryAttempts {
+			log.Debug().
+				Int("attempt", attempt).
+				Str("round", round).
+				Int64("round_start_height", roundStartHeight).
+				Int("challenge_count", len(challenges)).
+				Int("current_round_challenges", len(current)).
+				Int("skipped_old", skippedOld).
+				Int("skipped_future", skippedFuture).
+				Int("skipped_invalid", skippedInvalid).
+				Int64("min_challenge_round", minRound).
+				Int64("max_challenge_round", maxRound).
+				Bool("has_challenge_rounds", hasRound).
+				Msg("Fetched challenges for round")
 			return challenges, nil
 		}
 

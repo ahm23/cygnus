@@ -81,7 +81,7 @@ files that are no longer being challenged on-chain.`,
 
 			var cleaned int
 			page := 1
-			const pageSize = 100
+			const pageSize = 500
 
 			for {
 				list, err := sm.ListFiles(ctx, page, pageSize)

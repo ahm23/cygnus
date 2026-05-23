@@ -26,7 +26,7 @@ type APIConfig struct {
 }
 
 type Config struct {
-	BaseConfig
+	BaseConfig    `mapstructure:",squash"`
 	HomeDirectory string
 }
 

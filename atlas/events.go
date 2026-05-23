@@ -53,9 +53,15 @@ func NewEventListener(cfg *config.Config, receiver ChainEventReceiver) (*EventLi
 	if !strings.HasPrefix(rpcAddr, "http://") && !strings.HasPrefix(rpcAddr, "https://") {
 		rpcAddr = "http://" + rpcAddr
 	}
-	wsPath := "/websocket"
 
-	client, err := http.New(rpcAddr, wsPath)
+	// resolve the WebSocket endpoint — explicit ws_addr wins, otherwise
+	// derive from the HTTP RPC address (scheme swap + /websocket).
+	wsEndpoint := strings.TrimSuffix(cfg.ChainCfg.WSAddr, "/")
+	if wsEndpoint == "" {
+		wsEndpoint = "/websocket"
+	}
+
+	client, err := http.New(rpcAddr, wsEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("atlas events: create rpc client: %w", err)
 	}

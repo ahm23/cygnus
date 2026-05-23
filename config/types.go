@@ -8,13 +8,13 @@ type Seed struct {
 }
 
 type ChainConfig struct {
-	ChainId        string `yaml:"chain_id" mapstructure:"chain_id"`
-	KeyringBackend string `yaml:"keyring_backend" mapstructure:"keyring_backend"`
-	RPCAddr        string `yaml:"rpc_addr" mapstructure:"rpc_addr"`
-
-	GRPCAddr      string  `yaml:"grpc_addr" mapstructure:"grpc_addr"`
-	GasPrice      string  `yaml:"gas_price" mapstructure:"gas_price"`
-	GasAdjustment float64 `yaml:"gas_adjustment" mapstructure:"gas_adjustment"`
+	ChainId        string  `yaml:"chain_id" mapstructure:"chain_id"`
+	KeyringBackend string  `yaml:"keyring_backend" mapstructure:"keyring_backend"`
+	RPCAddr        string  `yaml:"rpc_addr" mapstructure:"rpc_addr"`
+	WSAddr         string  `yaml:"ws_addr" mapstructure:"ws_addr"`
+	GRPCAddr       string  `yaml:"grpc_addr" mapstructure:"grpc_addr"`
+	GasPrice       string  `yaml:"gas_price" mapstructure:"gas_price"`
+	GasAdjustment  float64 `yaml:"gas_adjustment" mapstructure:"gas_adjustment"`
 }
 
 type APIConfig struct {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/client"
 	cmtservice "github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/rs/zerolog/log"
 
@@ -117,9 +118,10 @@ func (am *AtlasManager) ConnectGRPC() error {
 	am.cmtClient = cmtservice.NewServiceClient(conn)
 	am.clientCtx = am.clientCtx.WithGRPCClient(conn)
 
+	log.Info().Msg("waht...")
 	// initialize query clients
 	am.QueryClients = types.QueryClients{
-		// Auth:    authtypes.NewQueryClient(conn),		// TODO: to be used for authz extensions?
+		Auth:    authtypes.NewQueryClient(conn),
 		Bank:    banktypes.NewQueryClient(conn),
 		Storage: storagetypes.NewQueryClient(conn),
 	}

@@ -236,11 +236,11 @@ func (sm *StorageManager) submitProof(ctx context.Context, fileID, challengeID s
 	}
 
 	if challengeID != "" {
-		if _, err := sm.atlas.Wallet.BroadcastExpeditedTxGrpc(0, false, msg); err != nil {
+		if _, err := sm.atlas.Wallet.BroadcastProofExpeditedTxGrpc(0, false, msg); err != nil {
 			return err
 		}
 	} else {
-		if _, err := sm.atlas.Wallet.BroadcastTxGrpc(0, false, msg); err != nil {
+		if _, err := sm.atlas.Wallet.BroadcastProofTxGrpc(0, false, msg); err != nil {
 			return err
 		}
 	}

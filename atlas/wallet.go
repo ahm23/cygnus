@@ -54,10 +54,11 @@ type AtlasWallet struct {
 }
 
 type walletTx struct {
-	retries int
-	wait    bool
-	msgs    []sdk.Msg
-	result  chan walletTxResult
+	retries   int
+	wait      bool
+	gasPrices string // "" means use wallet default
+	msgs      []sdk.Msg
+	result    chan walletTxResult
 }
 
 type walletTxResult struct {
@@ -176,12 +177,23 @@ func (w *AtlasWallet) GetAddress() string {
 
 // BroadcastTx broadcasts a transaction
 func (w *AtlasWallet) BroadcastTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
-	return w.executeTx(retries, wait, false, msgs...)
+	return w.executeTx(retries, wait, false, "", msgs...)
 }
 
 // BroadcastExpeditedTxGrpc broadcasts a transaction with priority over all other standard transactions to be submitted.
 func (w *AtlasWallet) BroadcastExpeditedTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
-	return w.executeTx(retries, wait, true, msgs...)
+	return w.executeTx(retries, wait, true, "", msgs...)
+}
+
+// BroadcastProofTxGrpc broadcasts a proof transaction with zero gas price.
+// Registered storage providers are exempt from fees on MsgProveFile transactions.
+func (w *AtlasWallet) BroadcastProofTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
+	return w.executeTx(retries, wait, false, "0uatl", msgs...)
+}
+
+// BroadcastProofExpeditedTxGrpc broadcasts an expedited proof transaction with zero gas price.
+func (w *AtlasWallet) BroadcastProofExpeditedTxGrpc(retries int, wait bool, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
+	return w.executeTx(retries, wait, true, "0uatl", msgs...)
 }
 
 // WaitForTx waits for transaction to be included in a block.
@@ -208,13 +220,14 @@ func (w *AtlasWallet) Stop() {
 
 // executeTx broadcasts a tx and provides options to retry the tx a given number of times,
 // wait for the tx to be included in a block, and expedite the tx.
-func (w *AtlasWallet) executeTx(retries int, wait bool, expedite bool, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
+func (w *AtlasWallet) executeTx(retries int, wait bool, expedite bool, gasPrices string, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
 	msgsCopy := append([]sdk.Msg(nil), msgs...)
 	tx := &walletTx{
-		retries: retries,
-		wait:    wait,
-		msgs:    msgsCopy,
-		result:  make(chan walletTxResult, 1),
+		retries:   retries,
+		wait:      wait,
+		gasPrices: gasPrices,
+		msgs:      msgsCopy,
+		result:    make(chan walletTxResult, 1),
 	}
 
 	// select standard or expedited queue
@@ -314,7 +327,7 @@ func (w *AtlasWallet) handleQueuedTx(req *walletTx) {
 
 		// broadcast transaction
 		ctx, cancel := context.WithTimeout(context.Background(), walletTxOpTimeout)
-		txResp, err = w.signAndBroadcastTx(ctx, req.msgs...)
+		txResp, err = w.signAndBroadcastTx(ctx, req.gasPrices, req.msgs...)
 		cancel()
 		if err != nil {
 			continue
@@ -343,8 +356,14 @@ func (w *AtlasWallet) handleQueuedTx(req *walletTx) {
 }
 
 // signAndBroadcastTx simulates the required gas, then builds, signs, encodes, and broadcasts the transaction.
-func (w *AtlasWallet) signAndBroadcastTx(ctx context.Context, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
+// If gasPricesOverride is non-empty, it is used instead of the wallet's configured gas price.
+func (w *AtlasWallet) signAndBroadcastTx(ctx context.Context, gasPricesOverride string, msgs ...sdk.Msg) (*sdk.TxResponse, error) {
 	accountNumber, sequence := w.accountInfo()
+
+	gasPrices := w.gasPrices
+	if gasPricesOverride != "" {
+		gasPrices = gasPricesOverride
+	}
 
 	// create transaction factory
 	txf := tx.Factory{}.
@@ -353,7 +372,7 @@ func (w *AtlasWallet) signAndBroadcastTx(ctx context.Context, msgs ...sdk.Msg) (
 		WithChainID(w.clientCtx.ChainID).
 		WithGas(250000). // default gas, though gas will be adjusted by simulation
 		WithGasAdjustment(w.gasAdjustment).
-		WithGasPrices(w.gasPrices).
+		WithGasPrices(gasPrices).
 		WithKeybase(w.clientCtx.Keyring).
 		WithAccountNumber(accountNumber).
 		WithSequence(sequence).

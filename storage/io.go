@@ -1,11 +1,18 @@
 package storage
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
 
 	"cygnus/types"
+)
+
+const (
+	// writeBufSize is the buffer size for buffered disk writes during upload.
+	// Larger buffers reduce syscalls when writing many small chunks.
+	writeBufSize = 256 * 1024
 )
 
 type ingestResult struct {
@@ -27,8 +34,13 @@ func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string, syn
 		return closeErr
 	}
 
+	// buffered writer batches small writes into large ones:
+	// 1GB @ 1KB/chunk 1M syscalls without buffering → ~4K with 256KB buffer
+	bufWriter := bufio.NewWriterSize(dest, writeBufSize)
+
 	result := &ingestResult{}
 	buf := make([]byte, types.ChunkSize)
+	result.Leaves = make([][]byte, 0, 1024)
 
 	for {
 		n, readErr := io.ReadFull(src, buf)
@@ -37,16 +49,20 @@ func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string, syn
 		}
 
 		if n > 0 {
-			chunk := append([]byte(nil), buf[:n]...)
-			if _, err := dest.Write(chunk); err != nil {
+			// write via buffered writer — batched, not one syscall per chunk
+			if _, err := bufWriter.Write(buf[:n]); err != nil {
 				return nil, cleanup(fmt.Errorf("failed to write upload stream: %w", err))
 			}
 
-			result.Leaves = append(result.Leaves, hashChunk(chunk))
+			// hash directly from buf — only the 32-byte hash is persisted in leaves
+			result.Leaves = append(result.Leaves, hashChunk(buf[:n]))
 			result.Size += int64(n)
 			result.Chunks++
+
+			// only the first chunk's data is needed for the initial proof;
+			// subsequent chunks are re-read from the file on demand via getFileSegment
 			if result.FirstChunk == nil {
-				result.FirstChunk = chunk
+				result.FirstChunk = append([]byte(nil), buf[:n]...)
 			}
 		}
 
@@ -57,6 +73,11 @@ func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string, syn
 
 	if result.Chunks == 0 {
 		return nil, cleanup(fmt.Errorf("empty files are not supported"))
+	}
+
+	// flush buffered writer before sync/close
+	if err := bufWriter.Flush(); err != nil {
+		return nil, cleanup(fmt.Errorf("failed to flush upload stream: %w", err))
 	}
 
 	if syncToDisk {

@@ -15,9 +15,11 @@ import (
 )
 
 func hashChunk(chunk []byte) []byte {
-	hasher := blake3.New()
-	_, _ = hasher.Write(chunk)
-	return hasher.Sum(nil)
+	// Sum256 is zero-allocation for chunks ≤ 1024 bytes — no Hasher struct
+	// allocation, no internal buffer. Compare to New()+Write()+Sum() which
+	// allocates an 8KB Hasher per call.
+	sum := blake3.Sum256(chunk)
+	return sum[:]
 }
 
 func buildMerkleTreeFromLeaves(leaves [][]byte) (*merkletree.MerkleTree, error) {

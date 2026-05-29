@@ -377,9 +377,8 @@ func fillStressBytes(dst []byte, fileIndex, offset int64) {
 }
 
 func hashStressChunk(chunk []byte) []byte {
-	hasher := blake3.New()
-	_, _ = hasher.Write(chunk)
-	return hasher.Sum(nil)
+	sum := blake3.Sum256(chunk)
+	return sum[:]
 }
 
 func stressFileID(providerName, runID string, index int, merkleRoot []byte) string {

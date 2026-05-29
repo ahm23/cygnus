@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -122,9 +123,12 @@ func (us *UploadServer) handleUpload(w http.ResponseWriter, r *http.Request) {
 		maxSize = 4 * 1024 * 1024 * 1024
 	}
 	src := http.MaxBytesReader(w, r.Body, maxSize)
+	// wrap with bufio to reduce TCP reads — the multipart parser reads 4KB at
+	// a time internally; buffering here batches that into 64KB TCP socket reads
+	bufferedSrc := bufio.NewReaderSize(src, 64*1024)
 
 	// --- stream-parse multipart in a single pass ---
-	reader := multipart.NewReader(src, boundary)
+	reader := multipart.NewReader(bufferedSrc, boundary)
 
 	var fileID string
 	var fileName string

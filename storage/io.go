@@ -41,8 +41,10 @@ func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string, syn
 	// 1GB @ 1KB/chunk → 1M syscalls without buffering → ~4K with 256KB buffer
 	bufWriter := bufio.NewWriterSize(dest, writeBufSize)
 
+	const bulkSize = 64 * 1024 // read in 64KB blocks from the source
+
 	result := &ingestResult{}
-	buf := make([]byte, types.ChunkSize)
+	bulkBuf := make([]byte, bulkSize)
 	result.Leaves = make([][]byte, 0, 1024)
 
 	loopStart := time.Now()
@@ -50,26 +52,30 @@ func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string, syn
 	reportEvery := 100_000 // log throughput every N chunks
 
 	for {
-		n, readErr := io.ReadFull(src, buf)
+		// read a large block from the source — one boundary check, not one per 1KB
+		n, readErr := io.ReadFull(src, bulkBuf)
 		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
 			return nil, cleanup(fmt.Errorf("failed to read upload stream: %w", readErr))
 		}
 
-		if n > 0 {
-			// write via buffered writer — batched, not one syscall per chunk
-			if _, err := bufWriter.Write(buf[:n]); err != nil {
+		// split the block into protocol ChunkSize pieces
+		for off := int64(0); off < int64(n); off += types.ChunkSize {
+			end := off + types.ChunkSize
+			if end > int64(n) {
+				end = int64(n)
+			}
+			piece := bulkBuf[off:end]
+
+			if _, err := bufWriter.Write(piece); err != nil {
 				return nil, cleanup(fmt.Errorf("failed to write upload stream: %w", err))
 			}
 
-			// hash directly from buf — only the 32-byte hash is persisted in leaves
-			result.Leaves = append(result.Leaves, hashChunk(buf[:n]))
-			result.Size += int64(n)
+			result.Leaves = append(result.Leaves, hashChunk(piece))
+			result.Size += int64(len(piece))
 			result.Chunks++
 
-			// only the first chunk's data is needed for the initial proof;
-			// subsequent chunks are re-read from the file on demand via getFileSegment
 			if result.FirstChunk == nil {
-				result.FirstChunk = append([]byte(nil), buf[:n]...)
+				result.FirstChunk = append([]byte(nil), piece...)
 			}
 		}
 

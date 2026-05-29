@@ -292,7 +292,7 @@ func (sm *StorageManager) ClaimFile(ctx context.Context, fileID, fileName string
 	}
 
 	tempPath := filePath + ".upload-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	ingest, err := streamFileToDiskAndCollectLeaves(src, tempPath, sm.config.APICfg.FsyncUploads)
+	ingest, err := streamFileToDiskAndCollectLeaves(src, tempPath, sm.config.APICfg.FsyncUploads, reservedSize)
 	if err != nil {
 		return nil, err
 	}

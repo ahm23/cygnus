@@ -10,9 +10,8 @@ import (
 )
 
 const (
-	// writeBufSize is the buffer size for buffered disk writes during upload.
-	// Larger buffers reduce syscalls when writing many small chunks.
-	writeBufSize = 256 * 1024
+	writeBufSize = 256 * 1024  // buffered disk write buffer
+	readBufSize  = 1024 * 1024 // internal read buffer — read big, split into ChunkSize pieces
 )
 
 type ingestResult struct {
@@ -22,7 +21,7 @@ type ingestResult struct {
 	Chunks     int
 }
 
-func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string, syncToDisk bool) (*ingestResult, error) {
+func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string, syncToDisk bool, fileSizeHint int64) (*ingestResult, error) {
 	dest, err := os.Create(destinationPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
@@ -34,35 +33,46 @@ func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string, syn
 		return closeErr
 	}
 
-	// buffered writer batches small writes into large ones:
-	// 1GB @ 1KB/chunk 1M syscalls without buffering → ~4K with 256KB buffer
 	bufWriter := bufio.NewWriterSize(dest, writeBufSize)
 
 	result := &ingestResult{}
-	buf := make([]byte, types.ChunkSize)
-	result.Leaves = make([][]byte, 0, 1024)
+	readBuf := make([]byte, readBufSize)
+
+	// pre-allocate leaves to avoid reallocation churn
+	estimatedChunks := int(fileSizeHint / types.ChunkSize)
+	if estimatedChunks < 1024 {
+		estimatedChunks = 1024
+	}
+	result.Leaves = make([][]byte, 0, estimatedChunks)
 
 	for {
-		n, readErr := io.ReadFull(src, buf)
+		n, readErr := src.Read(readBuf)
+		if n == 0 && readErr == io.EOF {
+			break
+		}
 		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
 			return nil, cleanup(fmt.Errorf("failed to read upload stream: %w", readErr))
 		}
 
-		if n > 0 {
-			// write via buffered writer — batched, not one syscall per chunk
-			if _, err := bufWriter.Write(buf[:n]); err != nil {
+		// split the large read into protocol ChunkSize pieces
+		for off := 0; off < n; off += types.ChunkSize {
+			end := off + types.ChunkSize
+			if end > n {
+				end = n
+			}
+			piece := readBuf[off:end]
+
+			if _, err := bufWriter.Write(piece); err != nil {
 				return nil, cleanup(fmt.Errorf("failed to write upload stream: %w", err))
 			}
 
-			// hash directly from buf — only the 32-byte hash is persisted in leaves
-			result.Leaves = append(result.Leaves, hashChunk(buf[:n]))
-			result.Size += int64(n)
+			// hash the piece — only the 32-byte hash is stored in leaves
+			result.Leaves = append(result.Leaves, hashChunk(piece))
+			result.Size += int64(len(piece))
 			result.Chunks++
 
-			// only the first chunk's data is needed for the initial proof;
-			// subsequent chunks are re-read from the file on demand via getFileSegment
 			if result.FirstChunk == nil {
-				result.FirstChunk = append([]byte(nil), buf[:n]...)
+				result.FirstChunk = append([]byte(nil), piece...)
 			}
 		}
 
@@ -75,7 +85,6 @@ func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string, syn
 		return nil, cleanup(fmt.Errorf("empty files are not supported"))
 	}
 
-	// flush buffered writer before sync/close
 	if err := bufWriter.Flush(); err != nil {
 		return nil, cleanup(fmt.Errorf("failed to flush upload stream: %w", err))
 	}

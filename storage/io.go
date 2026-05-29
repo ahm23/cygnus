@@ -78,7 +78,7 @@ func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string, syn
 			bytesSince := int64(reportEvery) * types.ChunkSize
 			mbpsSince := float64(bytesSince) / elapsedSince.Seconds() / (1024 * 1024)
 			mbpsTotal := float64(result.Size) / elapsedTotal.Seconds() / (1024 * 1024)
-			log.Info().
+			log.Debug().
 				Int("chunks", result.Chunks).
 				Int64("bytes", result.Size).
 				Float64("mbps_segment", mbpsSince).

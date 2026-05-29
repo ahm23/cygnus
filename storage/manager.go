@@ -299,7 +299,7 @@ func (sm *StorageManager) ClaimFile(ctx context.Context, fileID, fileName string
 	if err != nil {
 		return nil, err
 	}
-	log.Info().
+	log.Debug().
 		Str("file_id", fileID).
 		Int64("size", ingest.Size).
 		Int("chunks", ingest.Chunks).
@@ -319,7 +319,7 @@ func (sm *StorageManager) ClaimFile(ctx context.Context, fileID, fileName string
 		_ = os.Remove(tempPath)
 		return nil, err
 	}
-	log.Info().
+	log.Debug().
 		Str("file_id", fileID).
 		Dur("merkle_tree_ms", time.Since(t2)).
 		Msg("ClaimFile: merkle tree built")
@@ -369,7 +369,7 @@ func (sm *StorageManager) ClaimFile(ctx context.Context, fileID, fileName string
 		sm.cleanupCreatedFile(ctx, fileID, filePath)
 		return nil, fmt.Errorf("failed to post initial file proof: %w", err)
 	}
-	log.Info().
+	log.Debug().
 		Str("file_id", fileID).
 		Dur("cache_proof_ms", time.Since(t3)).
 		Dur("chain_tx_ms", time.Since(t4)).

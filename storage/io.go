@@ -41,41 +41,33 @@ func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string, syn
 	// 1GB @ 1KB/chunk → 1M syscalls without buffering → ~4K with 256KB buffer
 	bufWriter := bufio.NewWriterSize(dest, writeBufSize)
 
-	const bulkSize = 64 * 1024 // read in 64KB blocks from the source
+	// buf is reused for every 1KB chunk read from the source
+	buf := make([]byte, types.ChunkSize)
 
 	result := &ingestResult{}
-	bulkBuf := make([]byte, bulkSize)
 	result.Leaves = make([][]byte, 0, 1024)
 
 	loopStart := time.Now()
 	lastReport := loopStart
-	reportEvery := 100_000 // log throughput every N chunks
+	reportEvery := 100_000
 
 	for {
-		// read a large block from the source — one boundary check, not one per 1KB
-		n, readErr := io.ReadFull(src, bulkBuf)
+		n, readErr := io.ReadFull(src, buf)
 		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
 			return nil, cleanup(fmt.Errorf("failed to read upload stream: %w", readErr))
 		}
 
-		// split the block into protocol ChunkSize pieces
-		for off := int64(0); off < int64(n); off += types.ChunkSize {
-			end := off + types.ChunkSize
-			if end > int64(n) {
-				end = int64(n)
-			}
-			piece := bulkBuf[off:end]
-
-			if _, err := bufWriter.Write(piece); err != nil {
+		if n > 0 {
+			if _, err := bufWriter.Write(buf[:n]); err != nil {
 				return nil, cleanup(fmt.Errorf("failed to write upload stream: %w", err))
 			}
 
-			result.Leaves = append(result.Leaves, hashChunk(piece))
-			result.Size += int64(len(piece))
+			result.Leaves = append(result.Leaves, hashChunk(buf[:n]))
+			result.Size += int64(n)
 			result.Chunks++
 
 			if result.FirstChunk == nil {
-				result.FirstChunk = append([]byte(nil), piece...)
+				result.FirstChunk = append([]byte(nil), buf[:n]...)
 			}
 		}
 

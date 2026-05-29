@@ -47,6 +47,7 @@ func (us *UploadServer) Serve(ctx context.Context) error {
 	addr := fmt.Sprintf(":%d", us.cfg.UploadListenPort)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/upload", us.handleUpload)
+	mux.HandleFunc("/api/v1/upload-bench", us.handleUploadBench)
 
 	us.server = &http.Server{
 		Addr:        addr,
@@ -63,6 +64,41 @@ func (us *UploadServer) Shutdown(ctx context.Context) error {
 		return us.server.Shutdown(ctx)
 	}
 	return nil
+}
+
+// handleUploadBench is a raw throughput test — reads the request body and
+// discards it with zero processing. This isolates network throughput from
+// chunking/hashing/disk overhead.
+func (us *UploadServer) handleUploadBench(w http.ResponseWriter, r *http.Request) {
+	t0 := time.Now()
+	maxSize := us.cfg.MaxUploadSize
+	if maxSize <= 0 {
+		maxSize = 4 * 1024 * 1024 * 1024
+	}
+	src := http.MaxBytesReader(w, r.Body, maxSize)
+
+	n, err := io.Copy(io.Discard, src)
+	if err != nil {
+		us.respond(w, http.StatusInternalServerError, types.APIResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	elapsed := time.Since(t0)
+	mbps := float64(n) / elapsed.Seconds() / (1024 * 1024)
+	log.Info().
+		Int64("bytes", n).
+		Dur("elapsed", elapsed).
+		Float64("mbps", mbps).
+		Msg("Upload bench: raw body throughput")
+	us.respond(w, http.StatusOK, types.APIResponse{
+		Success: true,
+		Data: map[string]interface{}{
+			"bytes":   n,
+			"elapsed": elapsed.Milliseconds(),
+			"mbps":    mbps,
+		},
+		Message: fmt.Sprintf("%.1f MB/s", mbps),
+	})
 }
 
 // corsMiddleware wraps a handler with permissive CORS headers for the upload endpoint.

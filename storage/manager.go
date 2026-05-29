@@ -264,6 +264,8 @@ func (sm *StorageManager) CreateFile(ctx context.Context, fileID string, fileHea
 // ClaimFile stores a file from any io.Reader, indexes it locally, and submits an initial proof.
 // This is the shared path used by both direct uploads (CreateFile) and the stray-file sweeper.
 func (sm *StorageManager) ClaimFile(ctx context.Context, fileID, fileName string, src io.Reader, fileSize int64) (*types.FileMetadata, error) {
+	t0 := time.Now()
+
 	if err := validateFileID(fileID); err != nil {
 		return nil, err
 	}
@@ -291,11 +293,19 @@ func (sm *StorageManager) ClaimFile(ctx context.Context, fileID, fileName string
 		return nil, fmt.Errorf("file already exists locally")
 	}
 
+	t1 := time.Now()
 	tempPath := filePath + ".upload-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	ingest, err := streamFileToDiskAndCollectLeaves(src, tempPath, sm.config.APICfg.FsyncUploads, reservedSize)
+	ingest, err := streamFileToDiskAndCollectLeaves(src, tempPath, sm.config.APICfg.FsyncUploads)
 	if err != nil {
 		return nil, err
 	}
+	log.Info().
+		Str("file_id", fileID).
+		Int64("size", ingest.Size).
+		Int("chunks", ingest.Chunks).
+		Dur("stream_ingest_ms", time.Since(t1)).
+		Msg("ClaimFile: stream+ingest done")
+
 	if nextReservedSize, ok := sm.resizeReservedCapacity(reservedSize, ingest.Size); !ok {
 		_ = os.Remove(tempPath)
 		return nil, fmt.Errorf("insufficient provider capacity")
@@ -303,11 +313,16 @@ func (sm *StorageManager) ClaimFile(ctx context.Context, fileID, fileName string
 		reservedSize = nextReservedSize
 	}
 
+	t2 := time.Now()
 	tree, err := buildMerkleTreeFromLeaves(ingest.Leaves)
 	if err != nil {
 		_ = os.Remove(tempPath)
 		return nil, err
 	}
+	log.Info().
+		Str("file_id", fileID).
+		Dur("merkle_tree_ms", time.Since(t2)).
+		Msg("ClaimFile: merkle tree built")
 
 	if err := os.Rename(tempPath, filePath); err != nil {
 		_ = os.Remove(tempPath)
@@ -335,6 +350,7 @@ func (sm *StorageManager) ClaimFile(ctx context.Context, fileID, fileName string
 		return nil, fmt.Errorf("failed to store metadata: %w", err)
 	}
 
+	t3 := time.Now()
 	if sm.config.CacheMerkleTrees {
 		if err := sm.cacheMerkleTree(ctx, fileID, tree, ingest.Leaves); err != nil {
 			sm.cleanupCreatedFile(ctx, fileID, filePath)
@@ -348,10 +364,17 @@ func (sm *StorageManager) ClaimFile(ctx context.Context, fileID, fileName string
 		return nil, fmt.Errorf("failed to generate initial proof: %w", err)
 	}
 
+	t4 := time.Now()
 	if err := sm.submitProof(ctx, fileID, "", proof, 0, ingest.FirstChunk); err != nil {
 		sm.cleanupCreatedFile(ctx, fileID, filePath)
 		return nil, fmt.Errorf("failed to post initial file proof: %w", err)
 	}
+	log.Info().
+		Str("file_id", fileID).
+		Dur("cache_proof_ms", time.Since(t3)).
+		Dur("chain_tx_ms", time.Since(t4)).
+		Dur("total_ms", time.Since(t0)).
+		Msg("ClaimFile: complete")
 
 	sm.commitReservedFile()
 	committedReservation = true

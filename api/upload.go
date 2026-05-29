@@ -85,6 +85,7 @@ func (us *UploadServer) respond(w http.ResponseWriter, status int, resp types.AP
 }
 
 func (us *UploadServer) handleUpload(w http.ResponseWriter, r *http.Request) {
+	t0 := time.Now()
 	remoteIP := r.RemoteAddr
 	cl := r.Header.Get("Content-Length")
 	if cl == "" {
@@ -214,6 +215,7 @@ foundFile:
 		Int64("size", metadata.Size).
 		Int("chunks", metadata.Chunks).
 		Str("merkle_root", metadata.MerkleRoot).
+		Dur("handler_total_ms", time.Since(t0)).
 		Msg("Upload: file uploaded successfully")
 	us.respond(w, http.StatusOK, types.APIResponse{Success: true, Data: metadata, Message: "file uploaded successfully"})
 }

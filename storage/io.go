@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"cygnus/types"
+
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -42,6 +45,10 @@ func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string, syn
 	buf := make([]byte, types.ChunkSize)
 	result.Leaves = make([][]byte, 0, 1024)
 
+	loopStart := time.Now()
+	lastReport := loopStart
+	reportEvery := 100_000 // log throughput every N chunks
+
 	for {
 		n, readErr := io.ReadFull(src, buf)
 		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
@@ -64,6 +71,22 @@ func streamFileToDiskAndCollectLeaves(src io.Reader, destinationPath string, syn
 			if result.FirstChunk == nil {
 				result.FirstChunk = append([]byte(nil), buf[:n]...)
 			}
+		}
+
+		if result.Chunks%reportEvery == 0 {
+			now := time.Now()
+			elapsedTotal := now.Sub(loopStart)
+			elapsedSince := now.Sub(lastReport)
+			bytesSince := int64(reportEvery) * types.ChunkSize
+			mbpsSince := float64(bytesSince) / elapsedSince.Seconds() / (1024 * 1024)
+			mbpsTotal := float64(result.Size) / elapsedTotal.Seconds() / (1024 * 1024)
+			log.Info().
+				Int("chunks", result.Chunks).
+				Int64("bytes", result.Size).
+				Float64("mbps_segment", mbpsSince).
+				Float64("mbps_cumulative", mbpsTotal).
+				Msg("streamFile: progress")
+			lastReport = now
 		}
 
 		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {

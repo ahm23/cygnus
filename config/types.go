@@ -22,6 +22,10 @@ type APIConfig struct {
 	MaxUploadSize    int64 `yaml:"max_upload_size" mapstructure:"max_upload_size"`
 	PrioritizeProofs bool  `yaml:"pause_uploads_for_proofs" mapstructure:"pause_uploads_for_proofs"`
 	FsyncUploads     bool  `yaml:"fsync_uploads" mapstructure:"fsync_uploads"`
+	// UploadListenPort, if non-zero, starts a separate net/http listener for
+	// streaming uploads, bypassing fasthttp's in-memory body buffering.
+	// Set to 0 to disable (uploads go through the Fiber server).
+	UploadListenPort int64 `yaml:"upload_listen_port" mapstructure:"upload_listen_port"`
 }
 
 type Config struct {

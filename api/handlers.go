@@ -111,6 +111,9 @@ func (h *Handler) UploadFile(c *fiber.Ctx) error {
 				}
 			}
 			filePart = part
+			// break immediately — calling NextPart() again would read past the file data
+			// looking for the next boundary, consuming the stream we need to pass to ClaimFile.
+			break
 		}
 		// ignore other form fields
 	}

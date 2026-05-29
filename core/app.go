@@ -3,12 +3,10 @@ package core
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
-	"time"
 
 	"github.com/rs/zerolog/log"
 
@@ -30,7 +28,6 @@ type App struct {
 	eventCancel    context.CancelFunc
 	chainReceiver  *chainEventReceiver
 	straySweeper   *StraySweeper
-	uploadServer   *api.UploadServer
 }
 
 func NewApp(home string) (*App, error) {
@@ -74,12 +71,6 @@ func NewApp(home string) (*App, error) {
 	// initialize stray-file sweeper (nil lister until chain query is wired)
 	straySweeper := NewStraySweeper(&cfg.StraySweep, sm, am)
 
-	// initialize streaming upload server if a separate port is configured
-	var uploadServer *api.UploadServer
-	if cfg.APICfg.UploadListenPort > 0 {
-		uploadServer = api.NewUploadServer(sm, am, &cfg.APICfg)
-	}
-
 	return &App{
 		cfg:            cfg,
 		home:           home,
@@ -89,7 +80,6 @@ func NewApp(home string) (*App, error) {
 		eventListener:  eventListener,
 		chainReceiver:  receiver,
 		straySweeper:   straySweeper,
-		uploadServer:   uploadServer,
 	}, nil
 }
 
@@ -128,15 +118,6 @@ func (app *App) Start() error {
 	go app.api.Serve()
 	defer app.api.Close()
 	log.Debug().Msg("api server started")
-
-	// start streaming upload server (if configured)
-	if app.uploadServer != nil {
-		go func() {
-			if err := app.uploadServer.Serve(ctx); err != nil && err != http.ErrServerClosed {
-				log.Error().Err(err).Msg("Streaming upload server stopped with error")
-			}
-		}()
-	}
 
 	// start Atlas Protocol block height polling
 	go app.atlas.PollBlockHeight(ctx, app.blockEventHandler)
@@ -191,11 +172,6 @@ func (app *App) Start() error {
 	}
 	if app.eventListener != nil {
 		app.eventListener.Stop()
-	}
-	if app.uploadServer != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		_ = app.uploadServer.Shutdown(shutdownCtx)
-		cancel()
 	}
 	return nil
 }

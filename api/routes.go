@@ -9,12 +9,7 @@ import (
 )
 
 func (a *API) SetupRoutes(cfg *config.Config, atlas *atlas.AtlasManager, storageManager *storage.StorageManager) {
-	handler := NewHandler(storageManager, cfg)
-	middleware := Middleware{
-		AtlasQueryClients: &atlas.QueryClients,
-		StorageManager:    storageManager,
-		Config:            cfg,
-	}
+	handler := NewHandler(storageManager, cfg, atlas)
 
 	api := a.srv.Group("/api/v1")
 
@@ -24,9 +19,7 @@ func (a *API) SetupRoutes(cfg *config.Config, atlas *atlas.AtlasManager, storage
 	api.Get("/files/:id", handler.GetFile)
 
 	api.Get("/download/:id", handler.DownloadFile)
-	api.Post("/upload",
-		middleware.ValidateStagedFileExists,
-		handler.UploadFile)
+	api.Post("/upload", handler.UploadFile)
 }
 
 // SetupSwagger for API documentation (optional).

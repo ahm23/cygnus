@@ -25,7 +25,7 @@ func NewAPI(cfg *config.APIConfig) *API {
 		ReadTimeout:                  5 * time.Minute,
 		WriteTimeout:                 5 * time.Minute,
 		IdleTimeout:                  5 * time.Minute,
-		DisablePreParseMultipartForm: false,
+		DisablePreParseMultipartForm: true,
 		BodyLimit:                    4 * 1024 * 1024 * 1024,
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			fmt.Println("ERROR:", err)

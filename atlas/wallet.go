@@ -312,10 +312,11 @@ func (w *AtlasWallet) handleQueuedTx(req *walletTx) {
 
 		// on retry, pause for 1-3 seconds and refresh account sequence number
 		if attempt > 0 {
-			log.Error().
-				Str("tx_hash", txResp.TxHash).
-				Err(err).
-				Msg("Transaction failed")
+			logErr := log.Error().Err(err)
+			if txResp != nil {
+				logErr = logErr.Str("tx_hash", txResp.TxHash)
+			}
+			logErr.Msg("Transaction failed")
 
 			time.Sleep(time.Duration(attempt) * time.Second)
 			log.Debug().Int("attempt", attempt).Msg("Retrying queued transaction")

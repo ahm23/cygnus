@@ -11,7 +11,6 @@ type ChainConfig struct {
 	ChainId        string  `yaml:"chain_id" mapstructure:"chain_id"`
 	KeyringBackend string  `yaml:"keyring_backend" mapstructure:"keyring_backend"`
 	RPCAddr        string  `yaml:"rpc_addr" mapstructure:"rpc_addr"`
-	WSAddr         string  `yaml:"ws_addr" mapstructure:"ws_addr"`
 	GRPCAddr       string  `yaml:"grpc_addr" mapstructure:"grpc_addr"`
 	GasPrice       string  `yaml:"gas_price" mapstructure:"gas_price"`
 	GasAdjustment  float64 `yaml:"gas_adjustment" mapstructure:"gas_adjustment"`
@@ -22,7 +21,6 @@ type APIConfig struct {
 	MaxUploadSize    int64 `yaml:"max_upload_size" mapstructure:"max_upload_size"`
 	PrioritizeProofs bool  `yaml:"pause_uploads_for_proofs" mapstructure:"pause_uploads_for_proofs"`
 	FsyncUploads     bool  `yaml:"fsync_uploads" mapstructure:"fsync_uploads"`
-
 }
 
 type Config struct {
@@ -36,7 +34,7 @@ type BaseConfig struct {
 	APICfg        APIConfig   `yaml:"api_config" mapstructure:"api_config"`
 
 	ProviderName     string           `yaml:"provider_name" mapstructure:"provider_name"`
-	Ip               string           `yaml:"domain" mapstructure:"domain"`
+	Ip               string           `yaml:"hostname" mapstructure:"hostname"`
 	TotalSpace       int64            `yaml:"total_bytes_offered" mapstructure:"total_bytes_offered"`
 	CacheMerkleTrees bool             `yaml:"cache_merkle_trees" mapstructure:"cache_merkle_trees"`
 	StraySweep       StraySweepConfig `yaml:"stray_sweep" mapstructure:"stray_sweep"`

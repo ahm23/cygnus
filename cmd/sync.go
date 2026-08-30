@@ -20,7 +20,7 @@ func SyncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Sync provider details to the blockchain using local config",
-		Long: `Reads the local config (hostname/domain, total space) and updates 
+		Long: `Reads the local config (hostname, total space) and updates 
 the on-chain provider record via an UpdateProvider transaction.
 
 This is useful after changing your provider configuration to push those 
@@ -42,7 +42,7 @@ changes to the blockchain.`,
 
 			log.Info().
 				Str("provider", cfg.ProviderName).
-				Str("domain", cfg.Ip).
+				Str("hostname", cfg.Ip).
 				Int64("total_space", cfg.TotalSpace).
 				Str("rpc", cfg.ChainCfg.GRPCAddr).
 				Msg("Loaded local config")
